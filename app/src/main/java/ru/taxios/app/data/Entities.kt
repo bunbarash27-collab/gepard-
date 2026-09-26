@@ -16,6 +16,11 @@ data class ShiftEntity(
     val endTime: Long? = null,
     val idleKm: Double = 0.0,
     val extraExpenses: Double = 0.0,
+    /** Пробег по GPS за смену. */
+    val trackedKm: Double = 0.0,
+    /** Текущий заказ: начало и накопленный по GPS пробег. */
+    val activeOrderStart: Long? = null,
+    val activeOrderKm: Double = 0.0,
 )
 
 @Entity(
@@ -35,6 +40,29 @@ data class OrderEntity(
     val price: Double,
     val distanceKm: Double,
     val durationMin: Int,
+    val auto: Boolean = false,
+)
+
+@Entity(tableName = "track_points", indices = [Index("shiftId")])
+data class TrackPointEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val shiftId: Long,
+    val timestamp: Long,
+    val lat: Double,
+    val lon: Double,
+    val inOrder: Boolean,
+)
+
+@Entity(tableName = "notification_log")
+data class NotificationLogEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val timestamp: Long,
+    val packageName: String,
+    val title: String,
+    val text: String,
+    val price: Double? = null,
+    val distanceKm: Double? = null,
+    val durationMin: Int? = null,
 )
 
 data class ShiftWithOrders(
@@ -42,13 +70,18 @@ data class ShiftWithOrders(
     @Relation(parentColumn = "id", entityColumn = "shiftId") val orders: List<OrderEntity>,
 )
 
+/** Пробег без пассажира: у закрытой смены — сохранённое значение, у идущей — GPS-пробег минус километры заказов. */
+fun ShiftWithOrders.effectiveIdleKm(): Double =
+    if (shift.endTime == null && shift.trackedKm > 0) (shift.trackedKm - orders.sumOf { it.distanceKm } - shift.activeOrderKm).coerceAtLeast(0.0)
+    else shift.idleKm
+
 fun OrderEntity.toInput() = OrderInput(timestamp, price, distanceKm, durationMin)
 
 /** Незавершённая смена считается до [now]. */
 fun ShiftWithOrders.toInput(now: Long) = ShiftInput(
     startTime = shift.startTime,
     endTime = shift.endTime ?: now,
-    idleKm = shift.idleKm,
+    idleKm = effectiveIdleKm(),
     extraExpenses = shift.extraExpenses,
     orders = orders.map { it.toInput() },
 )

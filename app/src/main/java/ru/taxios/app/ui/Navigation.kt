@@ -23,6 +23,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import ru.taxios.app.ui.screens.CalculatorScreen
+import ru.taxios.app.ui.screens.NotificationsScreen
 import ru.taxios.app.ui.screens.SettingsScreen
 import ru.taxios.app.ui.screens.StatsScreen
 import ru.taxios.app.ui.screens.TodayScreen
@@ -33,6 +34,8 @@ enum class Dest(val route: String, val label: String, val icon: ImageVector) {
     Stats("stats", "Статистика", Icons.Default.BarChart),
     Settings("settings", "Настройки", Icons.Default.Settings),
 }
+
+const val ROUTE_NOTIFICATIONS = "notifications"
 
 @Composable
 fun TaxiOsApp() {
@@ -65,7 +68,8 @@ fun TaxiOsApp() {
             composable(Dest.Today.route) { TodayScreen(vm) }
             composable(Dest.Calculator.route) { CalculatorScreen(vm) }
             composable(Dest.Stats.route) { StatsScreen(vm) }
-            composable(Dest.Settings.route) { SettingsScreen(vm) }
+            composable(Dest.Settings.route) { SettingsScreen(vm, onOpenNotifications = { navController.navigate(ROUTE_NOTIFICATIONS) }) }
+            composable(ROUTE_NOTIFICATIONS) { NotificationsScreen(vm, onBack = { navController.popBackStack() }) }
         }
     }
 }

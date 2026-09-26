@@ -13,6 +13,15 @@ interface ShiftDao {
     @Query("SELECT * FROM shifts WHERE endTime IS NULL ORDER BY startTime DESC LIMIT 1")
     fun observeActive(): Flow<ShiftEntity?>
 
+    @Query("SELECT * FROM shifts WHERE endTime IS NULL ORDER BY startTime DESC LIMIT 1")
+    suspend fun getActive(): ShiftEntity?
+
+    @Query("SELECT * FROM shifts WHERE id = :id")
+    suspend fun getById(id: Long): ShiftEntity?
+
+    @Query("UPDATE shifts SET trackedKm = trackedKm + :deltaKm, activeOrderKm = activeOrderKm + CASE WHEN activeOrderStart IS NULL THEN 0 ELSE :deltaKm END WHERE id = :id")
+    suspend fun addDistance(id: Long, deltaKm: Double)
+
     @Transaction
     @Query("SELECT * FROM shifts ORDER BY startTime DESC")
     fun observeAllWithOrders(): Flow<List<ShiftWithOrders>>
@@ -37,4 +46,25 @@ interface OrderDao {
 
     @Delete
     suspend fun delete(order: OrderEntity)
+}
+
+@Dao
+interface TrackDao {
+    @Insert
+    suspend fun insert(point: TrackPointEntity)
+}
+
+@Dao
+interface NotificationLogDao {
+    @Query("SELECT * FROM notification_log ORDER BY timestamp DESC LIMIT 200")
+    fun observeRecent(): Flow<List<NotificationLogEntity>>
+
+    @Insert
+    suspend fun insert(entry: NotificationLogEntity)
+
+    @Query("DELETE FROM notification_log")
+    suspend fun clear()
+
+    @Query("DELETE FROM notification_log WHERE timestamp < :before")
+    suspend fun deleteOlderThan(before: Long)
 }

@@ -1,6 +1,7 @@
 package ru.taxios.app.ui
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.viewModelScope
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import ru.taxios.app.TaxiApp
+import ru.taxios.app.data.NotificationLogEntity
 import ru.taxios.app.data.OrderEntity
 import ru.taxios.app.data.Repository
 import ru.taxios.app.data.ShiftEntity
@@ -25,6 +27,7 @@ import ru.taxios.app.data.toInput
 import ru.taxios.app.domain.Calculator
 import ru.taxios.app.domain.CostSettings
 import ru.taxios.app.domain.ShiftSummary
+import ru.taxios.app.tracking.TrackingService
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -35,15 +38,18 @@ data class TodayState(
     val activeShift: ShiftEntity? = null,
     val activeOrders: List<OrderEntity> = emptyList(),
     val activeMinutes: Int = 0,
+    val activeOrderMinutes: Int = 0,
+    /** Последнее уведомление Яндекс Про с распознанной ценой (не старше 15 минут). */
+    val suggestion: NotificationLogEntity? = null,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class MainViewModel(private val repo: Repository) : ViewModel() {
+class MainViewModel(app: Application, private val repo: Repository) : AndroidViewModel(app) {
 
     private val ticker = flow {
         while (true) {
             emit(System.currentTimeMillis())
-            delay(30_000)
+            delay(15_000)
         }
     }
 
@@ -60,8 +66,21 @@ class MainViewModel(private val repo: Repository) : ViewModel() {
         .flatMapLatest { s -> if (s == null) flowOf(emptyList()) else repo.ordersFor(s.id) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    val notifications: StateFlow<List<NotificationLogEntity>> =
+        repo.notifications.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     val today: StateFlow<TodayState> =
-        combine(settings, shifts, activeShift, activeOrders, ticker) { s, all, active, orders, now ->
+        combine(settings, shifts, activeShift, activeOrders, notifications, ticker) { values ->
+            @Suppress("UNCHECKED_CAST")
+            val s = values[0] as CostSettings
+            @Suppress("UNCHECKED_CAST")
+            val all = values[1] as List<ShiftWithOrders>
+            val active = values[2] as ShiftEntity?
+            @Suppress("UNCHECKED_CAST")
+            val orders = values[3] as List<OrderEntity>
+            @Suppress("UNCHECKED_CAST")
+            val notes = values[4] as List<NotificationLogEntity>
+            val now = values[5] as Long
             val zone = ZoneId.systemDefault()
             val todayDate = LocalDate.now(zone)
             val todays = all.filter { Instant.ofEpochMilli(it.shift.startTime).atZone(zone).toLocalDate() == todayDate }
@@ -71,13 +90,24 @@ class MainViewModel(private val repo: Repository) : ViewModel() {
                 activeShift = active,
                 activeOrders = orders,
                 activeMinutes = active?.let { ((now - it.startTime) / 60_000L).toInt() } ?: 0,
+                activeOrderMinutes = active?.activeOrderStart?.let { ((now - it) / 60_000L).toInt() } ?: 0,
+                suggestion = notes.firstOrNull { it.price != null && now - it.timestamp < 15 * 60_000L },
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TodayState())
 
-    fun startShift() = viewModelScope.launch { repo.startShift() }
+    fun startShift() = viewModelScope.launch {
+        val id = repo.startShift()
+        TrackingService.start(getApplication(), id)
+    }
 
     fun endShift(idleKm: Double, extraExpenses: Double) = viewModelScope.launch {
         activeShift.value?.let { repo.endShift(it, idleKm, extraExpenses) }
+        TrackingService.stop(getApplication())
+    }
+
+    /** Перезапуск трекинга, если смена активна, а сервис был убит системой. */
+    fun ensureTracking() {
+        activeShift.value?.let { TrackingService.start(getApplication(), it.id) }
     }
 
     fun addOrder(price: Double, km: Double, minutes: Int) = viewModelScope.launch {
@@ -85,15 +115,28 @@ class MainViewModel(private val repo: Repository) : ViewModel() {
         repo.addOrder(shiftId, price, km, minutes)
     }
 
+    fun startOrder() = viewModelScope.launch { activeShift.value?.let { repo.startOrder(it.id) } }
+
+    fun finishOrder(price: Double, kmOverride: Double?) = viewModelScope.launch {
+        activeShift.value?.let { repo.finishOrder(it.id, price, kmOverride) }
+    }
+
+    fun cancelOrder() = viewModelScope.launch { activeShift.value?.let { repo.cancelOrder(it.id) } }
+
     fun deleteOrder(order: OrderEntity) = viewModelScope.launch { repo.deleteOrder(order) }
 
     fun deleteShift(shift: ShiftEntity) = viewModelScope.launch { repo.deleteShift(shift) }
 
     fun saveSettings(s: CostSettings) = viewModelScope.launch { repo.saveSettings(s) }
 
+    fun clearNotifications() = viewModelScope.launch { repo.clearNotifications() }
+
     companion object {
         val Factory: ViewModelProvider.Factory = viewModelFactory {
-            initializer { MainViewModel((this[APPLICATION_KEY] as TaxiApp).repository) }
+            initializer {
+                val app = this[APPLICATION_KEY] as TaxiApp
+                MainViewModel(app, app.repository)
+            }
         }
     }
 }

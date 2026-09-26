@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -17,10 +18,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import ru.taxios.app.domain.CostSettings
+import ru.taxios.app.tracking.TaxiNotificationListener
 import ru.taxios.app.ui.MainViewModel
 import ru.taxios.app.ui.NumberField
 import ru.taxios.app.ui.edit
@@ -28,8 +34,11 @@ import ru.taxios.app.ui.parseNumber
 import ru.taxios.app.ui.theme.Green
 
 @Composable
-fun SettingsScreen(vm: MainViewModel) {
+fun SettingsScreen(vm: MainViewModel, onOpenNotifications: () -> Unit) {
+    val context = LocalContext.current
     val current by vm.settings.collectAsStateWithLifecycle()
+    var listenerEnabled by remember { mutableStateOf(TaxiNotificationListener.isEnabled(context)) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { listenerEnabled = TaxiNotificationListener.isEnabled(context) }
     var loadedFrom by remember { mutableStateOf<CostSettings?>(null) }
     var consumption by remember { mutableStateOf("") }
     var fuelPrice by remember { mutableStateOf("") }
@@ -60,6 +69,18 @@ fun SettingsScreen(vm: MainViewModel) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text("Настройки", style = MaterialTheme.typography.headlineSmall)
+        Text("Автоматизация", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        Text(
+            if (listenerEnabled) "✅ Доступ к уведомлениям Яндекс Про включён: суммы заказов подставляются автоматически."
+            else "Разрешите чтение уведомлений, чтобы приложение само подхватывало заказы из Яндекс Про.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (!listenerEnabled) {
+            Button(onClick = { TaxiNotificationListener.openSettings(context) }, modifier = Modifier.fillMaxWidth()) { Text("Разрешить доступ к уведомлениям") }
+        }
+        OutlinedButton(onClick = onOpenNotifications, modifier = Modifier.fillMaxWidth()) { Text("Журнал уведомлений") }
+
         Text("Автомобиль", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
         NumberField(consumption, { consumption = it }, "Расход топлива", suffix = "л/100 км")
         NumberField(fuelPrice, { fuelPrice = it }, "Цена топлива", suffix = "₽/л")
