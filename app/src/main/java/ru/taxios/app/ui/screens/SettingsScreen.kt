@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -18,6 +19,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -47,6 +50,7 @@ fun SettingsScreen(vm: MainViewModel, onOpenNotifications: () -> Unit) {
     var emptyReturn by remember { mutableStateOf("") }
     var targetHourly by remember { mutableStateOf("") }
     var dailyGoal by remember { mutableStateOf("") }
+    var autoMode by remember { mutableStateOf(true) }
     var saved by remember { mutableStateOf(false) }
 
     // Заполняем поля один раз, когда настройки загрузились из DataStore.
@@ -59,6 +63,7 @@ fun SettingsScreen(vm: MainViewModel, onOpenNotifications: () -> Unit) {
         emptyReturn = current.emptyReturnPercent.edit()
         targetHourly = current.targetHourlyNet.edit()
         dailyGoal = current.dailyGoalNet.edit()
+        autoMode = current.autoMode
     }
 
     val parsed = listOf(consumption, fuelPrice, depreciation, commission, emptyReturn, targetHourly, dailyGoal).map { it.parseNumber() }
@@ -80,6 +85,16 @@ fun SettingsScreen(vm: MainViewModel, onOpenNotifications: () -> Unit) {
             Button(onClick = { TaxiNotificationListener.openSettings(context) }, modifier = Modifier.fillMaxWidth()) { Text("Разрешить доступ к уведомлениям") }
         }
         OutlinedButton(onClick = onOpenNotifications, modifier = Modifier.fillMaxWidth()) { Text("Журнал уведомлений") }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Автоматическая смена")
+                Text(
+                    "«На линии» начинает смену, «На заказе» открывает заказ, «На линии» закрывает его, «Занят» ставит паузу.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = autoMode, onCheckedChange = { autoMode = it })
+        }
 
         Text("Автомобиль", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
         NumberField(consumption, { consumption = it }, "Расход топлива", suffix = "л/100 км")
@@ -100,6 +115,7 @@ fun SettingsScreen(vm: MainViewModel, onOpenNotifications: () -> Unit) {
                     fuelConsumptionL100 = parsed[0]!!, fuelPricePerL = parsed[1]!!, depreciationPerKm = parsed[2]!!,
                     commissionPercent = parsed[3]!!, emptyReturnPercent = parsed[4]!!,
                     targetHourlyNet = parsed[5]!!, dailyGoalNet = parsed[6]!!,
+                    autoMode = autoMode,
                 )
                 vm.saveSettings(s)
                 loadedFrom = s

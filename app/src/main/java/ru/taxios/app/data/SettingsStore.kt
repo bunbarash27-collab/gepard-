@@ -3,6 +3,7 @@ package ru.taxios.app.data
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
@@ -21,6 +22,7 @@ class SettingsStore(private val context: Context) {
         val emptyReturn = doublePreferencesKey("empty_return_percent")
         val targetHourly = doublePreferencesKey("target_hourly")
         val dailyGoal = doublePreferencesKey("daily_goal")
+        val autoMode = booleanPreferencesKey("auto_mode")
     }
 
     val settings: Flow<CostSettings> = context.dataStore.data.map { p ->
@@ -33,6 +35,7 @@ class SettingsStore(private val context: Context) {
             emptyReturnPercent = p[Keys.emptyReturn] ?: d.emptyReturnPercent,
             targetHourlyNet = p[Keys.targetHourly] ?: d.targetHourlyNet,
             dailyGoalNet = p[Keys.dailyGoal] ?: d.dailyGoalNet,
+            autoMode = p[Keys.autoMode] ?: d.autoMode,
         )
     }
 
@@ -45,6 +48,7 @@ class SettingsStore(private val context: Context) {
             p[Keys.emptyReturn] = s.emptyReturnPercent
             p[Keys.targetHourly] = s.targetHourlyNet
             p[Keys.dailyGoal] = s.dailyGoalNet
+            p[Keys.autoMode] = s.autoMode
         }
     }
 }

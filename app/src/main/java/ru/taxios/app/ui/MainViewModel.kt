@@ -23,6 +23,7 @@ import ru.taxios.app.data.OrderEntity
 import ru.taxios.app.data.Repository
 import ru.taxios.app.data.ShiftEntity
 import ru.taxios.app.data.ShiftWithOrders
+import ru.taxios.app.data.pausedMinutesAt
 import ru.taxios.app.data.toInput
 import ru.taxios.app.domain.Calculator
 import ru.taxios.app.domain.CostSettings
@@ -39,6 +40,7 @@ data class TodayState(
     val activeOrders: List<OrderEntity> = emptyList(),
     val activeMinutes: Int = 0,
     val activeOrderMinutes: Int = 0,
+    val pausedMinutes: Int = 0,
     /** Последнее уведомление Яндекс Про с распознанной ценой (не старше 15 минут). */
     val suggestion: NotificationLogEntity? = null,
 )
@@ -89,8 +91,9 @@ class MainViewModel(app: Application, private val repo: Repository) : AndroidVie
                 summary = Calculator.summarize(todays.map { it.toInput(now) }, s),
                 activeShift = active,
                 activeOrders = orders,
-                activeMinutes = active?.let { ((now - it.startTime) / 60_000L).toInt() } ?: 0,
+                activeMinutes = active?.let { (((now - it.startTime) / 60_000L).toInt() - it.pausedMinutesAt(now)).coerceAtLeast(0) } ?: 0,
                 activeOrderMinutes = active?.activeOrderStart?.let { ((now - it) / 60_000L).toInt() } ?: 0,
+                pausedMinutes = active?.pausedMinutesAt(now) ?: 0,
                 suggestion = notes.firstOrNull { it.price != null && now - it.timestamp < 15 * 60_000L },
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TodayState())
@@ -115,6 +118,10 @@ class MainViewModel(app: Application, private val repo: Repository) : AndroidVie
         repo.addOrder(shiftId, price, km, minutes)
     }
 
+    fun pauseShift() = viewModelScope.launch { activeShift.value?.let { repo.pauseShift(it.id) } }
+
+    fun resumeShift() = viewModelScope.launch { activeShift.value?.let { repo.resumeShift(it.id) } }
+
     fun startOrder() = viewModelScope.launch { activeShift.value?.let { repo.startOrder(it.id) } }
 
     fun finishOrder(price: Double, kmOverride: Double?) = viewModelScope.launch {
@@ -122,6 +129,8 @@ class MainViewModel(app: Application, private val repo: Repository) : AndroidVie
     }
 
     fun cancelOrder() = viewModelScope.launch { activeShift.value?.let { repo.cancelOrder(it.id) } }
+
+    fun setOrderPrice(order: OrderEntity, price: Double, km: Double) = viewModelScope.launch { repo.setOrderPrice(order, price, km) }
 
     fun deleteOrder(order: OrderEntity) = viewModelScope.launch { repo.deleteOrder(order) }
 

@@ -1,6 +1,7 @@
 package ru.taxios.app.data
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import ru.taxios.app.domain.CostSettings
 
 class Repository(private val db: AppDatabase, private val settingsStore: SettingsStore) {
@@ -13,16 +14,33 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
 
     suspend fun getActiveShift(): ShiftEntity? = db.shiftDao().getActive()
 
+    suspend fun currentSettings(): CostSettings = settingsStore.settings.first()
+
     suspend fun startShift(): Long = db.shiftDao().insert(ShiftEntity(startTime = System.currentTimeMillis()))
 
     suspend fun endShift(shift: ShiftEntity, idleKm: Double, extraExpenses: Double) {
         val fresh = db.shiftDao().getById(shift.id) ?: shift
+        val now = System.currentTimeMillis()
         db.shiftDao().update(
             fresh.copy(
-                endTime = System.currentTimeMillis(), idleKm = idleKm, extraExpenses = extraExpenses,
+                endTime = now, idleKm = idleKm, extraExpenses = extraExpenses,
                 activeOrderStart = null, activeOrderKm = 0.0,
+                pausedSince = null, pausedMinutes = fresh.pausedMinutesAt(now),
             ),
         )
+    }
+
+    suspend fun pauseShift(shiftId: Long) {
+        val shift = db.shiftDao().getById(shiftId) ?: return
+        if (shift.pausedSince != null) return
+        db.shiftDao().update(shift.copy(pausedSince = System.currentTimeMillis()))
+    }
+
+    suspend fun resumeShift(shiftId: Long) {
+        val shift = db.shiftDao().getById(shiftId) ?: return
+        val since = shift.pausedSince ?: return
+        val minutes = ((System.currentTimeMillis() - since) / 60_000L).toInt()
+        db.shiftDao().update(shift.copy(pausedSince = null, pausedMinutes = shift.pausedMinutes + minutes))
     }
 
     suspend fun deleteShift(shift: ShiftEntity) = db.shiftDao().delete(shift)
@@ -32,18 +50,27 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
 
     suspend fun startOrder(shiftId: Long) {
         val shift = db.shiftDao().getById(shiftId) ?: return
+        if (shift.activeOrderStart != null) return
         db.shiftDao().update(shift.copy(activeOrderStart = System.currentTimeMillis(), activeOrderKm = 0.0))
     }
 
-    /** Завершает GPS-заказ: км и минуты берутся из трекинга, вводится только цена. */
-    suspend fun finishOrder(shiftId: Long, price: Double, kmOverride: Double? = null) {
-        val shift = db.shiftDao().getById(shiftId) ?: return
-        val start = shift.activeOrderStart ?: return
+    /**
+     * Завершает GPS-заказ: км и минуты берутся из трекинга. Если [price] не задана,
+     * заказ сохраняется с пометкой «укажите сумму». Возвращает созданный заказ или null.
+     */
+    suspend fun finishOrder(shiftId: Long, price: Double?, kmOverride: Double? = null): OrderEntity? {
+        val shift = db.shiftDao().getById(shiftId) ?: return null
+        val start = shift.activeOrderStart ?: return null
         val now = System.currentTimeMillis()
         val minutes = ((now - start) / 60_000L).toInt().coerceAtLeast(1)
         val km = kmOverride ?: shift.activeOrderKm
-        db.orderDao().insert(OrderEntity(shiftId = shiftId, timestamp = start, price = price, distanceKm = km, durationMin = minutes, auto = true))
+        val order = OrderEntity(
+            shiftId = shiftId, timestamp = start, price = price ?: 0.0, distanceKm = km, durationMin = minutes,
+            auto = true, priceMissing = price == null,
+        )
+        val id = db.orderDao().insert(order)
         db.shiftDao().update(shift.copy(activeOrderStart = null, activeOrderKm = 0.0))
+        return order.copy(id = id)
     }
 
     suspend fun cancelOrder(shiftId: Long) {
@@ -54,6 +81,9 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
     suspend fun addDistance(shiftId: Long, deltaKm: Double) = db.shiftDao().addDistance(shiftId, deltaKm)
 
     suspend fun addTrackPoint(point: TrackPointEntity) = db.trackDao().insert(point)
+
+    suspend fun setOrderPrice(order: OrderEntity, price: Double, km: Double) =
+        db.orderDao().update(order.copy(price = price, distanceKm = km, priceMissing = false))
 
     suspend fun deleteOrder(order: OrderEntity) = db.orderDao().delete(order)
 

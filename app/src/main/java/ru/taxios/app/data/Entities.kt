@@ -21,6 +21,9 @@ data class ShiftEntity(
     /** Текущий заказ: начало и накопленный по GPS пробег. */
     val activeOrderStart: Long? = null,
     val activeOrderKm: Double = 0.0,
+    /** Пауза (обед и т.п.): начало текущей паузы и накопленные минуты завершённых пауз. */
+    val pausedSince: Long? = null,
+    val pausedMinutes: Int = 0,
 )
 
 @Entity(
@@ -41,6 +44,8 @@ data class OrderEntity(
     val distanceKm: Double,
     val durationMin: Int,
     val auto: Boolean = false,
+    /** Заказ закрыт автоматически, сумма ещё не указана. */
+    val priceMissing: Boolean = false,
 )
 
 @Entity(tableName = "track_points", indices = [Index("shiftId")])
@@ -77,6 +82,9 @@ fun ShiftWithOrders.effectiveIdleKm(): Double =
 
 fun OrderEntity.toInput() = OrderInput(timestamp, price, distanceKm, durationMin)
 
+fun ShiftEntity.pausedMinutesAt(now: Long): Int =
+    pausedMinutes + (pausedSince?.let { ((now - it) / 60_000L).toInt() } ?: 0)
+
 /** Незавершённая смена считается до [now]. */
 fun ShiftWithOrders.toInput(now: Long) = ShiftInput(
     startTime = shift.startTime,
@@ -84,4 +92,5 @@ fun ShiftWithOrders.toInput(now: Long) = ShiftInput(
     idleKm = effectiveIdleKm(),
     extraExpenses = shift.extraExpenses,
     orders = orders.map { it.toInput() },
+    pausedMinutes = if (shift.endTime == null) shift.pausedMinutesAt(now) else shift.pausedMinutes,
 )

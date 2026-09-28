@@ -9,6 +9,8 @@ data class CostSettings(
     val emptyReturnPercent: Double = 50.0,
     val targetHourlyNet: Double = 400.0,
     val dailyGoalNet: Double = 5000.0,
+    /** Автоматически вести смену по статусам уведомлений Яндекс Про. */
+    val autoMode: Boolean = true,
 )
 
 data class OrderInput(
@@ -24,8 +26,9 @@ data class ShiftInput(
     val idleKm: Double,
     val extraExpenses: Double,
     val orders: List<OrderInput>,
+    val pausedMinutes: Int = 0,
 ) {
-    val minutes: Int get() = ((endTime - startTime) / 60_000L).toInt().coerceAtLeast(0)
+    val minutes: Int get() = (((endTime - startTime) / 60_000L).toInt() - pausedMinutes).coerceAtLeast(0)
 }
 
 data class ShiftSummary(

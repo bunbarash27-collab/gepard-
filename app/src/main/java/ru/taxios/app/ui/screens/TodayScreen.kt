@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -73,6 +74,7 @@ fun TodayScreen(vm: MainViewModel) {
     var showAddOrder by remember { mutableStateOf(false) }
     var showFinishOrder by remember { mutableStateOf(false) }
     var showEndShift by remember { mutableStateOf(false) }
+    var priceFor by remember { mutableStateOf<OrderEntity?>(null) }
     var listenerEnabled by remember { mutableStateOf(TaxiNotificationListener.isEnabled(context)) }
     val sum = state.summary
     val s = state.settings
@@ -106,13 +108,24 @@ fun TodayScreen(vm: MainViewModel) {
                     Text("Смена не начата. Пробег и время считаются автоматически по GPS.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Button(onClick = { startShiftWithPermissions() }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Начать смену", style = MaterialTheme.typography.titleMedium) }
                 } else {
-                    Text("С ${active.startTime.time()} · ${state.activeMinutes.hhmm()} · GPS ${active.trackedKm.km()} · заказов: ${state.activeOrders.size}")
-                    if (active.activeOrderStart == null) {
+                    Text("С ${active.startTime.time()} · работа ${state.activeMinutes.hhmm()} · GPS ${active.trackedKm.km()} · заказов: ${state.activeOrders.size}")
+                    if (state.pausedMinutes > 0 || active.pausedSince != null) {
+                        Text("Пауза: ${state.pausedMinutes.hhmm()}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    if (active.pausedSince != null) {
+                        Text("⏸ На паузе с ${active.pausedSince.time()} — время и пробег не считаются", color = Amber, fontWeight = FontWeight.Bold)
+                        Button(
+                            onClick = { vm.resumeShift() },
+                            modifier = Modifier.fillMaxWidth().height(64.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Amber, contentColor = MaterialTheme.colorScheme.onPrimary),
+                        ) { Text("▶ Продолжить смену", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                    } else if (active.activeOrderStart == null) {
                         Button(
                             onClick = { vm.startOrder() },
                             modifier = Modifier.fillMaxWidth().height(64.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = MaterialTheme.colorScheme.onPrimary),
                         ) { Text("▶ Заказ начался", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                        OutlinedButton(onClick = { vm.pauseShift() }, modifier = Modifier.fillMaxWidth()) { Text("⏸ Пауза (обед, отдых)") }
                     } else {
                         Text(
                             "Заказ идёт: ${state.activeOrderMinutes} мин · ${active.activeOrderKm.km()}",
@@ -131,6 +144,25 @@ fun TodayScreen(vm: MainViewModel) {
                             Text("Вручную")
                         }
                         OutlinedButton(onClick = { showEndShift = true }, modifier = Modifier.weight(1f)) { Text("Завершить смену") }
+                    }
+                    if (listenerEnabled && s.autoMode) {
+                        Text(
+                            "🤖 Автоматика включена: заказы и паузы фиксируются по статусам Яндекс Про, вам остаётся только вписать сумму.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+        val missing = state.activeOrders.filter { it.priceMissing }
+        if (missing.isNotEmpty()) {
+            item {
+                SectionCard("✏️ Укажите сумму · ${missing.size}") {
+                    missing.forEach { o ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("${o.timestamp.time()} · ${o.distanceKm.km()} · ${o.durationMin} мин", modifier = Modifier.weight(1f))
+                            Button(onClick = { priceFor = o }) { Text("Сумма") }
+                        }
                     }
                 }
             }
@@ -186,11 +218,17 @@ fun TodayScreen(vm: MainViewModel) {
         if (state.activeOrders.isNotEmpty()) {
             item { Text("Заказы смены", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 4.dp)) }
             items(state.activeOrders, key = { it.id }) { order ->
-                OrderRow(order, s, onDelete = { vm.deleteOrder(order) })
+                OrderRow(order, s, onDelete = { vm.deleteOrder(order) }, onEdit = { priceFor = order })
             }
         }
     }
 
+    priceFor?.let { order ->
+        SetPriceDialog(order, state.suggestion?.price, s, onDismiss = { priceFor = null }) { price, km ->
+            vm.setOrderPrice(order, price, km)
+            priceFor = null
+        }
+    }
     if (showAddOrder) {
         AddOrderDialog(s, onDismiss = { showAddOrder = false }) { price, km, min ->
             vm.addOrder(price, km, min)
@@ -240,11 +278,15 @@ private fun SuggestionCard(n: NotificationLogEntity, s: CostSettings) {
 }
 
 @Composable
-private fun OrderRow(order: OrderEntity, s: CostSettings, onDelete: () -> Unit) {
+private fun OrderRow(order: OrderEntity, s: CostSettings, onDelete: () -> Unit, onEdit: () -> Unit) {
     SectionCard {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("${order.timestamp.time()} · ${order.price.rub()}", fontWeight = FontWeight.Bold)
+            Column(Modifier.weight(1f).clickable(onClick = onEdit)) {
+                if (order.priceMissing) {
+                    Text("${order.timestamp.time()} · сумма не указана", fontWeight = FontWeight.Bold, color = Amber)
+                } else {
+                    Text("${order.timestamp.time()} · ${order.price.rub()}${if (order.auto) " · авто" else ""}", fontWeight = FontWeight.Bold)
+                }
                 Text(
                     "${order.distanceKm.km()} · ${order.durationMin} мин · чистыми ≈ ${Calculator.orderNet(order.price, order.distanceKm, s).rub()}",
                     style = MaterialTheme.typography.bodyMedium,
@@ -254,6 +296,31 @@ private fun OrderRow(order: OrderEntity, s: CostSettings, onDelete: () -> Unit) 
             IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, contentDescription = "Удалить") }
         }
     }
+}
+
+@Composable
+fun SetPriceDialog(order: OrderEntity, suggestedPrice: Double?, settings: CostSettings, onDismiss: () -> Unit, onConfirm: (Double, Double) -> Unit) {
+    var price by remember { mutableStateOf(if (order.priceMissing) suggestedPrice?.edit() ?: "" else order.price.edit()) }
+    var km by remember { mutableStateOf(order.distanceKm.edit()) }
+    val p = price.parseNumber()
+    val k = km.parseNumber()
+    val valid = p != null && p > 0 && k != null && k >= 0
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Сумма заказа") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("${order.timestamp.time()} · ${order.durationMin} мин · по GPS ${order.distanceKm.km()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                NumberField(price, { price = it }, "Стоимость", suffix = "₽")
+                NumberField(km, { km = it }, "Расстояние", suffix = "км", supporting = "Можно поправить, если GPS ошибся")
+                if (p != null && k != null) {
+                    Text("Чистыми ≈ ${Calculator.orderNet(p, k, settings).rub()}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                }
+            }
+        },
+        confirmButton = { TextButton(enabled = valid, onClick = { onConfirm(p!!, k!!) }) { Text("Сохранить") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
+    )
 }
 
 @Composable
