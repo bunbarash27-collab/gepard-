@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">TAXI OS</string>
+    <string name="accessibility_description">Читает стоимость заказа с экрана Яндекс Про, чтобы не вводить её вручную. Работает только внутри Яндекс Про, данные никуда не отправляются.</string>
 </resources>

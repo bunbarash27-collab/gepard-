@@ -51,6 +51,7 @@ import ru.taxios.app.data.NotificationLogEntity
 import ru.taxios.app.data.OrderEntity
 import ru.taxios.app.domain.Calculator
 import ru.taxios.app.domain.CostSettings
+import ru.taxios.app.tracking.ScreenReaderService
 import ru.taxios.app.tracking.TaxiNotificationListener
 import ru.taxios.app.ui.MainViewModel
 import ru.taxios.app.ui.NumberField
@@ -76,12 +77,14 @@ fun TodayScreen(vm: MainViewModel) {
     var showEndShift by remember { mutableStateOf(false) }
     var priceFor by remember { mutableStateOf<OrderEntity?>(null) }
     var listenerEnabled by remember { mutableStateOf(TaxiNotificationListener.isEnabled(context)) }
+    var screenReaderEnabled by remember { mutableStateOf(ScreenReaderService.isEnabled(context)) }
     val sum = state.summary
     val s = state.settings
     val active = state.activeShift
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         listenerEnabled = TaxiNotificationListener.isEnabled(context)
+        screenReaderEnabled = ScreenReaderService.isEnabled(context)
         vm.ensureTracking()
     }
 
@@ -108,7 +111,11 @@ fun TodayScreen(vm: MainViewModel) {
                     Text("Смена не начата. Пробег и время считаются автоматически по GPS.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Button(onClick = { startShiftWithPermissions() }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Начать смену", style = MaterialTheme.typography.titleMedium) }
                 } else {
-                    Text("С ${active.startTime.time()} · работа ${state.activeMinutes.hhmm()} · GPS ${active.trackedKm.km()} · заказов: ${state.activeOrders.size}")
+                    Text("С ${active.startTime.time()} · работа ${state.activeMinutes.hhmm()} · заказов: ${state.activeOrders.size}")
+                    Text(
+                        "Пробег ${active.trackedKm.km()} · холостой ${active.idleKm.km()}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium,
+                    )
                     if (state.pausedMinutes > 0 || active.pausedSince != null) {
                         Text("Пауза: ${state.pausedMinutes.hhmm()}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
                     }
@@ -131,6 +138,9 @@ fun TodayScreen(vm: MainViewModel) {
                             "Заказ идёт: ${state.activeOrderMinutes} мин · ${active.activeOrderKm.km()}",
                             color = Green, fontWeight = FontWeight.Bold,
                         )
+                        active.lastSeenPrice?.takeIf { (active.lastSeenPriceAt ?: 0) >= (active.activeOrderStart) - 3 * 60_000L }?.let {
+                            Text("Стоимость с экрана Яндекс Про: ${it.rub()}", color = MaterialTheme.colorScheme.primary)
+                        }
                         Button(
                             onClick = { showFinishOrder = true },
                             modifier = Modifier.fillMaxWidth().height(64.dp),
@@ -170,15 +180,24 @@ fun TodayScreen(vm: MainViewModel) {
         state.suggestion?.let { n ->
             item { SuggestionCard(n, s) }
         }
-        if (!listenerEnabled) {
+        if (!listenerEnabled || !screenReaderEnabled) {
             item {
                 SectionCard {
-                    Text("🔔 Подхватывать заказы из Яндекс Про", fontWeight = FontWeight.Bold)
-                    Text(
-                        "Разрешите чтение уведомлений — суммы заказов будут подставляться сами.",
-                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    OutlinedButton(onClick = { TaxiNotificationListener.openSettings(context) }, modifier = Modifier.fillMaxWidth()) { Text("Разрешить") }
+                    Text("🤖 Автоматика Яндекс Про", fontWeight = FontWeight.Bold)
+                    if (!listenerEnabled) {
+                        Text(
+                            "1. Доступ к уведомлениям — заказы и паузы будут фиксироваться сами.",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        OutlinedButton(onClick = { TaxiNotificationListener.openSettings(context) }, modifier = Modifier.fillMaxWidth()) { Text("Разрешить уведомления") }
+                    }
+                    if (!screenReaderEnabled) {
+                        Text(
+                            "2. Чтение экрана Яндекс Про — стоимость заказа будет подставляться сама. В списке служб включите «TAXI OS».",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        OutlinedButton(onClick = { ScreenReaderService.openSettings(context) }, modifier = Modifier.fillMaxWidth()) { Text("Разрешить чтение экрана") }
+                    }
                 }
             }
         }
@@ -248,8 +267,7 @@ fun TodayScreen(vm: MainViewModel) {
         }
     }
     if (showEndShift) {
-        val trackedIdle = active?.let { (it.trackedKm - state.activeOrders.sumOf { o -> o.distanceKm }).coerceAtLeast(0.0) } ?: 0.0
-        EndShiftDialog(trackedIdle = if (active != null && active.trackedKm > 0) trackedIdle else null, onDismiss = { showEndShift = false }) { idle, extra ->
+        EndShiftDialog(trackedIdle = active?.takeIf { it.trackedKm > 0 }?.idleKm, onDismiss = { showEndShift = false }) { idle, extra ->
             vm.endShift(idle, extra)
             showEndShift = false
         }

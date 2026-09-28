@@ -29,6 +29,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import ru.taxios.app.domain.CostSettings
+import ru.taxios.app.tracking.ScreenReaderService
 import ru.taxios.app.tracking.TaxiNotificationListener
 import ru.taxios.app.ui.MainViewModel
 import ru.taxios.app.ui.NumberField
@@ -41,7 +42,11 @@ fun SettingsScreen(vm: MainViewModel, onOpenNotifications: () -> Unit) {
     val context = LocalContext.current
     val current by vm.settings.collectAsStateWithLifecycle()
     var listenerEnabled by remember { mutableStateOf(TaxiNotificationListener.isEnabled(context)) }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { listenerEnabled = TaxiNotificationListener.isEnabled(context) }
+    var screenReaderEnabled by remember { mutableStateOf(ScreenReaderService.isEnabled(context)) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        listenerEnabled = TaxiNotificationListener.isEnabled(context)
+        screenReaderEnabled = ScreenReaderService.isEnabled(context)
+    }
     var loadedFrom by remember { mutableStateOf<CostSettings?>(null) }
     var consumption by remember { mutableStateOf("") }
     var fuelPrice by remember { mutableStateOf("") }
@@ -83,6 +88,15 @@ fun SettingsScreen(vm: MainViewModel, onOpenNotifications: () -> Unit) {
         )
         if (!listenerEnabled) {
             Button(onClick = { TaxiNotificationListener.openSettings(context) }, modifier = Modifier.fillMaxWidth()) { Text("Разрешить доступ к уведомлениям") }
+        }
+        Text(
+            if (screenReaderEnabled) "✅ Чтение экрана Яндекс Про включено: стоимость заказа подставляется автоматически."
+            else "Разрешите чтение экрана (Специальные возможности → TAXI OS), чтобы стоимость заказа подставлялась сама.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (!screenReaderEnabled) {
+            Button(onClick = { ScreenReaderService.openSettings(context) }, modifier = Modifier.fillMaxWidth()) { Text("Разрешить чтение экрана") }
         }
         OutlinedButton(onClick = onOpenNotifications, modifier = Modifier.fillMaxWidth()) { Text("Журнал уведомлений") }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

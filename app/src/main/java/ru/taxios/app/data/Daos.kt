@@ -19,8 +19,13 @@ interface ShiftDao {
     @Query("SELECT * FROM shifts WHERE id = :id")
     suspend fun getById(id: Long): ShiftEntity?
 
-    // На паузе пробег не считаем: это личная поездка, не работа.
-    @Query("UPDATE shifts SET trackedKm = trackedKm + :deltaKm, activeOrderKm = activeOrderKm + CASE WHEN activeOrderStart IS NULL THEN 0 ELSE :deltaKm END WHERE id = :id AND pausedSince IS NULL")
+    // Вне заказа километры идут в холостой пробег; на паузе ничего не считаем (личная поездка).
+    @Query(
+        "UPDATE shifts SET trackedKm = trackedKm + :deltaKm, " +
+            "activeOrderKm = activeOrderKm + CASE WHEN activeOrderStart IS NULL THEN 0 ELSE :deltaKm END, " +
+            "idleKm = idleKm + CASE WHEN activeOrderStart IS NULL THEN :deltaKm ELSE 0 END " +
+            "WHERE id = :id AND pausedSince IS NULL",
+    )
     suspend fun addDistance(id: Long, deltaKm: Double)
 
     @Transaction
@@ -41,6 +46,9 @@ interface ShiftDao {
 interface OrderDao {
     @Query("SELECT * FROM orders WHERE shiftId = :shiftId ORDER BY timestamp DESC")
     fun observeForShift(shiftId: Long): Flow<List<OrderEntity>>
+
+    @Query("SELECT * FROM orders WHERE shiftId = :shiftId AND priceMissing = 1 ORDER BY timestamp DESC LIMIT 1")
+    suspend fun latestMissingPrice(shiftId: Long): OrderEntity?
 
     @Insert
     suspend fun insert(order: OrderEntity): Long

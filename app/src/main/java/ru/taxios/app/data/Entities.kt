@@ -24,6 +24,9 @@ data class ShiftEntity(
     /** Пауза (обед и т.п.): начало текущей паузы и накопленные минуты завершённых пауз. */
     val pausedSince: Long? = null,
     val pausedMinutes: Int = 0,
+    /** Последняя стоимость, увиденная на экране Яндекс Про, и когда. */
+    val lastSeenPrice: Double? = null,
+    val lastSeenPriceAt: Long? = null,
 )
 
 @Entity(
@@ -75,10 +78,8 @@ data class ShiftWithOrders(
     @Relation(parentColumn = "id", entityColumn = "shiftId") val orders: List<OrderEntity>,
 )
 
-/** Пробег без пассажира: у закрытой смены — сохранённое значение, у идущей — GPS-пробег минус километры заказов. */
-fun ShiftWithOrders.effectiveIdleKm(): Double =
-    if (shift.endTime == null && shift.trackedKm > 0) (shift.trackedKm - orders.sumOf { it.distanceKm } - shift.activeOrderKm).coerceAtLeast(0.0)
-    else shift.idleKm
+/** Пробег без пассажира: копится по GPS, пока нет активного заказа, либо вводится вручную. */
+fun ShiftWithOrders.effectiveIdleKm(): Double = shift.idleKm
 
 fun OrderEntity.toInput() = OrderInput(timestamp, price, distanceKm, durationMin)
 

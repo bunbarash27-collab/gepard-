@@ -29,4 +29,16 @@ class OrderTextParserTest {
         assertTrue(p.isEmpty)
         assertNull(p.price)
     }
+
+    @Test
+    fun `pickPrice prefers order cost over daily balance`() {
+        val lines = listOf("За сегодня", "4 380 ₽", "Стоимость", "620 ₽", "Баланс: 12 300 ₽")
+        assertEquals(620.0, OrderTextParser.pickPrice(lines)!!, 0.01)
+    }
+
+    @Test
+    fun `pickPrice falls back to first plain price`() {
+        assertEquals(350.0, OrderTextParser.pickPrice(listOf("Центр → Аэропорт", "350 ₽", "12 км"))!!, 0.01)
+        assertNull(OrderTextParser.pickPrice(listOf("На линии", "Баланс 500 ₽")))
+    }
 }

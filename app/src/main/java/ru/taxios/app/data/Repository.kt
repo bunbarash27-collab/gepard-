@@ -45,8 +45,12 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
 
     suspend fun deleteShift(shift: ShiftEntity) = db.shiftDao().delete(shift)
 
-    suspend fun addOrder(shiftId: Long, price: Double, km: Double, minutes: Int, timestamp: Long = System.currentTimeMillis(), auto: Boolean = false) =
+    suspend fun addOrder(shiftId: Long, price: Double, km: Double, minutes: Int, timestamp: Long = System.currentTimeMillis(), auto: Boolean = false) {
         db.orderDao().insert(OrderEntity(shiftId = shiftId, timestamp = timestamp, price = price, distanceKm = km, durationMin = minutes, auto = auto))
+        // Ручной заказ во время GPS-смены: эти километры уже легли в холостой пробег.
+        val shift = db.shiftDao().getById(shiftId) ?: return
+        if (shift.trackedKm > 0) db.shiftDao().update(shift.copy(idleKm = (shift.idleKm - km).coerceAtLeast(0.0)))
+    }
 
     suspend fun startOrder(shiftId: Long) {
         val shift = db.shiftDao().getById(shiftId) ?: return
@@ -55,8 +59,8 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
     }
 
     /**
-     * Завершает GPS-заказ: км и минуты берутся из трекинга. Если [price] не задана,
-     * заказ сохраняется с пометкой «укажите сумму». Возвращает созданный заказ или null.
+     * Завершает GPS-заказ: км и минуты берутся из трекинга. Если [price] не задана, берётся
+     * стоимость, увиденная на экране Яндекс Про во время заказа, иначе — пометка «укажите сумму».
      */
     suspend fun finishOrder(shiftId: Long, price: Double?, kmOverride: Double? = null): OrderEntity? {
         val shift = db.shiftDao().getById(shiftId) ?: return null
@@ -64,9 +68,11 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
         val now = System.currentTimeMillis()
         val minutes = ((now - start) / 60_000L).toInt().coerceAtLeast(1)
         val km = kmOverride ?: shift.activeOrderKm
+        val seen = shift.lastSeenPrice?.takeIf { (shift.lastSeenPriceAt ?: 0) >= start - OFFER_LOOKBACK_MS }
+        val finalPrice = price ?: seen
         val order = OrderEntity(
-            shiftId = shiftId, timestamp = start, price = price ?: 0.0, distanceKm = km, durationMin = minutes,
-            auto = true, priceMissing = price == null,
+            shiftId = shiftId, timestamp = start, price = finalPrice ?: 0.0, distanceKm = km, durationMin = minutes,
+            auto = true, priceMissing = finalPrice == null,
         )
         val id = db.orderDao().insert(order)
         db.shiftDao().update(shift.copy(activeOrderStart = null, activeOrderKm = 0.0))
@@ -75,7 +81,26 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
 
     suspend fun cancelOrder(shiftId: Long) {
         val shift = db.shiftDao().getById(shiftId) ?: return
-        db.shiftDao().update(shift.copy(activeOrderStart = null, activeOrderKm = 0.0))
+        // Километры отменённого заказа — холостые.
+        db.shiftDao().update(shift.copy(activeOrderStart = null, activeOrderKm = 0.0, idleKm = shift.idleKm + shift.activeOrderKm))
+    }
+
+    /**
+     * Стоимость с экрана Яндекс Про: запоминаем для текущего заказа, а если заказ
+     * только что закрылся без суммы — проставляем ему (экран «Итого» появляется после поездки).
+     */
+    suspend fun recordScreenPrice(price: Double, at: Long) {
+        val shift = db.shiftDao().getActive() ?: return
+        if (shift.lastSeenPrice != price || shift.lastSeenPriceAt == null) {
+            db.shiftDao().update(shift.copy(lastSeenPrice = price, lastSeenPriceAt = at))
+        }
+        if (shift.activeOrderStart == null) {
+            val missing = db.orderDao().latestMissingPrice(shift.id) ?: return
+            val finishedAt = missing.timestamp + missing.durationMin * 60_000L
+            if (at - finishedAt <= COMPLETION_WINDOW_MS) {
+                db.orderDao().update(missing.copy(price = price, priceMissing = false))
+            }
+        }
     }
 
     suspend fun addDistance(shiftId: Long, deltaKm: Double) = db.shiftDao().addDistance(shiftId, deltaKm)
@@ -95,4 +120,11 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
     }
 
     suspend fun clearNotifications() = db.notificationLogDao().clear()
+
+    private companion object {
+        /** Цена, увиденная незадолго до принятия заказа (карточка предложения), тоже подходит. */
+        const val OFFER_LOOKBACK_MS = 3 * 60_000L
+        /** Сколько ждём экран «Итого» после закрытия заказа. */
+        const val COMPLETION_WINDOW_MS = 4 * 60_000L
+    }
 }
