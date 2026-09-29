@@ -21,6 +21,9 @@ data class ShiftEntity(
     /** Текущий заказ: начало и накопленный по GPS пробег. */
     val activeOrderStart: Long? = null,
     val activeOrderKm: Double = 0.0,
+    /** Момент, когда пассажир сел (начало А→Б), и пробег с этого момента. */
+    val rideStart: Long? = null,
+    val rideKm: Double = 0.0,
     /** Пауза (обед и т.п.): начало текущей паузы и накопленные минуты завершённых пауз. */
     val pausedSince: Long? = null,
     val pausedMinutes: Int = 0,
@@ -49,6 +52,9 @@ data class OrderEntity(
     val auto: Boolean = false,
     /** Заказ закрыт автоматически, сумма ещё не указана. */
     val priceMissing: Boolean = false,
+    /** Подача: путь до точки А (считается холостым пробегом). */
+    val pickupKm: Double = 0.0,
+    val pickupMin: Int = 0,
 )
 
 @Entity(tableName = "track_points", indices = [Index("shiftId")])

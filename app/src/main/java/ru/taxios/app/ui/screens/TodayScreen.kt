@@ -131,14 +131,28 @@ fun TodayScreen(vm: MainViewModel) {
                             onClick = { vm.startOrder() },
                             modifier = Modifier.fillMaxWidth().height(64.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = MaterialTheme.colorScheme.onPrimary),
-                        ) { Text("▶ Заказ начался", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                        ) { Text("▶ Заказ принят", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
                         OutlinedButton(onClick = { vm.pauseShift() }, modifier = Modifier.fillMaxWidth()) { Text("⏸ Пауза (обед, отдых)") }
+                    } else if (active.rideStart == null) {
+                        Text(
+                            "Еду на подачу: ${state.activeOrderMinutes} мин · ${active.activeOrderKm.km()} (холостой)",
+                            color = Amber, fontWeight = FontWeight.Bold,
+                        )
+                        Button(
+                            onClick = { vm.startRide() },
+                            modifier = Modifier.fillMaxWidth().height(64.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = MaterialTheme.colorScheme.onPrimary),
+                        ) { Text("🧍 Пассажир сел", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                        if (screenReaderEnabled) {
+                            Text("Отметится само, когда в Яндекс Про начнётся поездка.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        TextButton(onClick = { vm.cancelOrder() }, modifier = Modifier.fillMaxWidth()) { Text("Отменить заказ", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     } else {
                         Text(
-                            "Заказ идёт: ${state.activeOrderMinutes} мин · ${active.activeOrderKm.km()}",
+                            "Поездка А→Б: ${state.rideMinutes} мин · ${active.rideKm.km()} · подача ${(active.activeOrderKm - active.rideKm).coerceAtLeast(0.0).km()}",
                             color = Green, fontWeight = FontWeight.Bold,
                         )
-                        active.lastSeenPrice?.takeIf { (active.lastSeenPriceAt ?: 0) >= (active.activeOrderStart) - 3 * 60_000L }?.let {
+                        active.lastSeenPrice?.let {
                             Text("Стоимость с экрана Яндекс Про: ${it.rub()}", color = MaterialTheme.colorScheme.primary)
                         }
                         Button(
@@ -256,9 +270,9 @@ fun TodayScreen(vm: MainViewModel) {
     }
     if (showFinishOrder && active != null) {
         FinishOrderDialog(
-            trackedKm = active.activeOrderKm,
-            minutes = state.activeOrderMinutes,
-            suggestedPrice = state.suggestion?.price,
+            trackedKm = if (active.rideStart != null) active.rideKm else active.activeOrderKm,
+            minutes = if (active.rideStart != null) state.rideMinutes else state.activeOrderMinutes,
+            suggestedPrice = active.lastSeenPrice ?: state.suggestion?.price,
             settings = s,
             onDismiss = { showFinishOrder = false },
         ) { price, km ->
@@ -306,7 +320,9 @@ private fun OrderRow(order: OrderEntity, s: CostSettings, onDelete: () -> Unit, 
                     Text("${order.timestamp.time()} · ${order.price.rub()}${if (order.auto) " · авто" else ""}", fontWeight = FontWeight.Bold)
                 }
                 Text(
-                    "${order.distanceKm.km()} · ${order.durationMin} мин · чистыми ≈ ${Calculator.orderNet(order.price, order.distanceKm, s).rub()}",
+                    "${order.distanceKm.km()} · ${order.durationMin} мин" +
+                        (if (order.pickupKm > 0 || order.pickupMin > 0) " · подача ${order.pickupKm.km()}/${order.pickupMin} мин" else "") +
+                        " · чистыми ≈ ${Calculator.orderNet(order.price, order.distanceKm, s).rub()}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

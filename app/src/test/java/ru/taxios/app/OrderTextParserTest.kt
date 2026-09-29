@@ -31,14 +31,25 @@ class OrderTextParserTest {
     }
 
     @Test
-    fun `pickPrice prefers order cost over daily balance`() {
-        val lines = listOf("За сегодня", "4 380 ₽", "Стоимость", "620 ₽", "Баланс: 12 300 ₽")
-        assertEquals(620.0, OrderTextParser.pickPrice(lines)!!, 0.01)
+    fun `ride screen from real log`() {
+        val lines = listOf("Б", "улица Ворошилова, 3", "09:45", "Оплата наличными", "Стоимость поездки с учетом пробок", "149 ₽", "Завершить")
+        val info = OrderTextParser.classifyScreen(lines)
+        assertEquals(OrderTextParser.Screen.RIDE, info.screen)
+        assertEquals(149.0, info.price!!, 0.01)
     }
 
     @Test
-    fun `pickPrice falls back to first plain price`() {
-        assertEquals(350.0, OrderTextParser.pickPrice(listOf("Центр → Аэропорт", "350 ₽", "12 км"))!!, 0.01)
-        assertNull(OrderTextParser.pickPrice(listOf("На линии", "Баланс 500 ₽")))
+    fun `paid screen and daily totals`() {
+        val paid = OrderTextParser.classifyScreen(listOf("Оплачено картой", "250 ₽"))
+        assertEquals(OrderTextParser.Screen.PAID, paid.screen)
+        assertEquals(250.0, paid.price!!, 0.01)
+        // Дневной итог и бонус «Приоритет» — не цена заказа.
+        val totals = OrderTextParser.classifyScreen(listOf("Приоритет", "+49", "22 заказа", "3 479,93 ₽"))
+        assertEquals(OrderTextParser.Screen.OTHER, totals.screen)
+        assertNull(totals.price)
+        // Экран подачи с платной подачей.
+        val pickup = OrderTextParser.classifyScreen(listOf("А", "улица Чапаева, 174", "Б", "улица Лермонтова, 11/1", "Пассажир", "Платная подача", "+50 ₽"))
+        assertEquals(OrderTextParser.Screen.OTHER, pickup.screen)
+        assertNull(pickup.price)
     }
 }

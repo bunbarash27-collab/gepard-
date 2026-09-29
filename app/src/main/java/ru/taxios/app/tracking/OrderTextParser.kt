@@ -26,23 +26,39 @@ object OrderTextParser {
         return Parsed(price, km, minutes)
     }
 
-    private val priceKeywords = Regex("итого|стоимост|цена|к оплате|получите|заработ|наличн|оплат", RegexOption.IGNORE_CASE)
-    private val balanceKeywords = Regex("баланс|за сегодня|за день|за смену|за неделю|бонус|комисси|штраф|аренд|лимит", RegexOption.IGNORE_CASE)
+    /** Метки экрана Яндекс Про, за которыми идёт стоимость именно этой поездки. */
+    private val rideLabel = Regex("стоимость поездки", RegexOption.IGNORE_CASE)
+    private val paidLabel = Regex("^оплачено", RegexOption.IGNORE_CASE)
+
+    enum class Screen { RIDE, PAID, OTHER }
+
+    data class ScreenInfo(val screen: Screen, val price: Double?)
 
     /**
-     * Выбирает стоимость заказа среди строк экрана. Строки с суммой за день/балансом
-     * отбрасываются, приоритет — у строк с ключевыми словами о стоимости.
+     * Распознаёт экран Яндекс Про по строкам. RIDE — пассажир в машине (есть «Стоимость поездки…»
+     * и цена), PAID — экран после оплаты («Оплачено картой» + цена). Дневные итоги, бонусы
+     * «Приоритет», платная подача «+50 ₽» и прочее — OTHER без цены.
      */
-    fun pickPrice(lines: List<String>): Double? {
-        val candidates = lines.mapIndexedNotNull { i, line ->
-            val price = parse(line).price ?: return@mapIndexedNotNull null
-            val context = (lines.getOrNull(i - 1).orEmpty() + " " + line)
-            if (balanceKeywords.containsMatchIn(context)) return@mapIndexedNotNull null
-            val score = if (priceKeywords.containsMatchIn(context)) 2 else 1
-            Triple(price, score, i)
+    fun classifyScreen(lines: List<String>): ScreenInfo {
+        lines.forEachIndexed { i, line ->
+            if (rideLabel.containsMatchIn(line)) {
+                return ScreenInfo(Screen.RIDE, priceAfter(lines, i))
+            }
         }
-        if (candidates.isEmpty()) return null
-        val best = candidates.maxOf { it.second }
-        return candidates.first { it.second == best }.first
+        lines.forEachIndexed { i, line ->
+            if (paidLabel.containsMatchIn(line)) {
+                priceAfter(lines, i)?.let { return ScreenInfo(Screen.PAID, it) }
+            }
+        }
+        return ScreenInfo(Screen.OTHER, null)
     }
+
+    private fun priceAfter(lines: List<String>, index: Int): Double? =
+        (index + 1..minOf(index + 3, lines.lastIndex)).firstNotNullOfOrNull { j ->
+            val l = lines[j]
+            if (l.trimStart().startsWith("+")) null else parse(l).price
+        }
+
+    /** Совместимость: цена поездки с экрана, если экран — поездка или оплата. */
+    fun pickPrice(lines: List<String>): Double? = classifyScreen(lines).price
 }

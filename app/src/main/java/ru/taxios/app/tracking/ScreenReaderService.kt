@@ -28,24 +28,36 @@ class ScreenReaderService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (event.packageName?.toString() !in TaxiNotificationListener.WATCHED_PACKAGES) return
         val root = rootInActiveWindow ?: return
+        // Событие может прийти от Яндекс Про, пока на экране другое приложение (в том числе TAXI OS).
+        if (root.packageName?.toString() !in TaxiNotificationListener.WATCHED_PACKAGES) return
         val lines = ArrayList<String>(64)
         collect(root, lines, 0)
         if (lines.isEmpty()) return
-        val priceLines = lines.filterIndexed { i, l -> OrderTextParser.parse(l).price != null || (i + 1 < lines.size && OrderTextParser.parse(lines[i + 1]).price != null) }
-        if (priceLines.isEmpty()) return
-        val price = OrderTextParser.pickPrice(lines) ?: return
-        val joined = priceLines.joinToString("\n")
+        val info = OrderTextParser.classifyScreen(lines)
         val now = System.currentTimeMillis()
+        val priceLines = lines.filterIndexed { i, l -> OrderTextParser.parse(l).price != null || (i + 1 < lines.size && OrderTextParser.parse(lines[i + 1]).price != null) }
         scope.launch {
             val repo = (application as TaxiApp).repository
-            repo.recordScreenPrice(price, now)
+            when (info.screen) {
+                OrderTextParser.Screen.RIDE -> repo.onRideScreen(info.price, now)
+                OrderTextParser.Screen.PAID -> repo.onPaidScreen(info.price!!, now)
+                OrderTextParser.Screen.OTHER -> Unit
+            }
+            // В журнал — только распознанные экраны и экраны с суммами, без повторов каждые 5 секунд.
+            if (priceLines.isEmpty()) return@launch
+            val joined = "${info.screen}\n" + priceLines.filterNot { it.matches(Regex("""\d{1,2}:\d{2}""")) }.joinToString("\n")
             if (joined != lastLogged && now - lastLoggedAt > 5_000) {
                 lastLogged = joined
                 lastLoggedAt = now
                 repo.logNotification(
                     NotificationLogEntity(
-                        timestamp = now, packageName = "экран Яндекс Про", title = "Строки с суммами",
-                        text = joined, price = price,
+                        timestamp = now, packageName = "экран Яндекс Про",
+                        title = when (info.screen) {
+                            OrderTextParser.Screen.RIDE -> "Поездка (пассажир в машине)"
+                            OrderTextParser.Screen.PAID -> "Оплата"
+                            OrderTextParser.Screen.OTHER -> "Экран с суммами"
+                        },
+                        text = joined.substringAfter("\n"), price = info.price,
                     ),
                 )
             }
