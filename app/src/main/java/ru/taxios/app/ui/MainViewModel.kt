@@ -40,7 +40,6 @@ data class TodayState(
     val activeOrders: List<OrderEntity> = emptyList(),
     val activeMinutes: Int = 0,
     val activeOrderMinutes: Int = 0,
-    val rideMinutes: Int = 0,
     val pausedMinutes: Int = 0,
     /** Последнее уведомление Яндекс Про с распознанной ценой (не старше 15 минут). */
     val suggestion: NotificationLogEntity? = null,
@@ -94,7 +93,6 @@ class MainViewModel(app: Application, private val repo: Repository) : AndroidVie
                 activeOrders = orders,
                 activeMinutes = active?.let { (((now - it.startTime) / 60_000L).toInt() - it.pausedMinutesAt(now)).coerceAtLeast(0) } ?: 0,
                 activeOrderMinutes = active?.activeOrderStart?.let { ((now - it) / 60_000L).toInt() } ?: 0,
-                rideMinutes = active?.rideStart?.let { ((now - it) / 60_000L).toInt() } ?: 0,
                 pausedMinutes = active?.pausedMinutesAt(now) ?: 0,
                 suggestion = notes.firstOrNull { it.price != null && now - it.timestamp < 15 * 60_000L },
             )
@@ -105,10 +103,12 @@ class MainViewModel(app: Application, private val repo: Repository) : AndroidVie
         TrackingService.start(getApplication(), id)
     }
 
-    fun endShift(idleKm: Double, extraExpenses: Double) = viewModelScope.launch {
-        activeShift.value?.let { repo.endShift(it, idleKm, extraExpenses) }
+    fun endShift(manualKm: Double?, extraExpenses: Double) = viewModelScope.launch {
+        activeShift.value?.let { repo.endShift(it, manualKm, extraExpenses) }
         TrackingService.stop(getApplication())
     }
+
+    fun setShiftKm(manualKm: Double?) = viewModelScope.launch { activeShift.value?.let { repo.setShiftKm(it.id, manualKm) } }
 
     /** Перезапуск трекинга, если смена активна, а сервис был убит системой. */
     fun ensureTracking() {
@@ -125,8 +125,6 @@ class MainViewModel(app: Application, private val repo: Repository) : AndroidVie
     fun resumeShift() = viewModelScope.launch { activeShift.value?.let { repo.resumeShift(it.id) } }
 
     fun startOrder() = viewModelScope.launch { activeShift.value?.let { repo.startOrder(it.id) } }
-
-    fun startRide() = viewModelScope.launch { activeShift.value?.let { repo.startRide(it.id) } }
 
     fun finishOrder(price: Double, kmOverride: Double?) = viewModelScope.launch {
         activeShift.value?.let { repo.finishOrder(it.id, price, kmOverride) }

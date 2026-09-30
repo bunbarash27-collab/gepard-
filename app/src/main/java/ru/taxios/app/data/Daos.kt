@@ -19,12 +19,10 @@ interface ShiftDao {
     @Query("SELECT * FROM shifts WHERE id = :id")
     suspend fun getById(id: Long): ShiftEntity?
 
-    // Рабочий пробег — только А→Б (rideStart задан); подача и поиск заказа — холостой. На паузе не считаем.
+    // Общий пробег смены плюс пробег текущего заказа (для справки). На паузе не считаем.
     @Query(
         "UPDATE shifts SET trackedKm = trackedKm + :deltaKm, " +
-            "activeOrderKm = activeOrderKm + CASE WHEN activeOrderStart IS NULL THEN 0 ELSE :deltaKm END, " +
-            "rideKm = rideKm + CASE WHEN rideStart IS NULL THEN 0 ELSE :deltaKm END, " +
-            "idleKm = idleKm + CASE WHEN rideStart IS NULL THEN :deltaKm ELSE 0 END " +
+            "activeOrderKm = activeOrderKm + CASE WHEN activeOrderStart IS NULL THEN 0 ELSE :deltaKm END " +
             "WHERE id = :id AND pausedSince IS NULL",
     )
     suspend fun addDistance(id: Long, deltaKm: Double)

@@ -109,10 +109,10 @@ object Analytics {
             }
         }
 
-        if (total.km > 0 && total.idleKm > 0) {
-            val share = (total.idleKm / total.km * 100).roundToInt()
-            val cost = Calculator.fuelCost(total.idleKm, s) + Calculator.depreciation(total.idleKm, s)
-            out += "Холостой пробег — $share% всего пробега, это примерно ${fmt(cost)} ₽ расходов за период."
+        if (total.km > 0 && total.orders > 0) {
+            val kmPerOrder = total.km / total.orders
+            val costPerKm = Calculator.fuelCost(1.0, s) + Calculator.depreciation(1.0, s)
+            out += "На один заказ приходится ${"%.1f".format(kmPerOrder)} км пробега — это примерно ${fmt(kmPerOrder * costPerKm)} ₽ расходов на заказ."
         }
 
         if (total.gross > 0) {

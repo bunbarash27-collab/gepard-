@@ -23,7 +23,8 @@ data class OrderInput(
 data class ShiftInput(
     val startTime: Long,
     val endTime: Long,
-    val idleKm: Double,
+    /** Общий пробег за смену — база для расчёта бензина и амортизации. */
+    val totalKm: Double,
     val extraExpenses: Double,
     val orders: List<OrderInput>,
     val pausedMinutes: Int = 0,
@@ -38,7 +39,6 @@ data class ShiftSummary(
     val depreciation: Double = 0.0,
     val extra: Double = 0.0,
     val km: Double = 0.0,
-    val idleKm: Double = 0.0,
     val minutes: Int = 0,
     val orders: Int = 0,
     val shifts: Int = 0,
@@ -50,6 +50,6 @@ data class ShiftSummary(
 
     operator fun plus(o: ShiftSummary) = ShiftSummary(
         gross + o.gross, commission + o.commission, fuel + o.fuel, depreciation + o.depreciation,
-        extra + o.extra, km + o.km, idleKm + o.idleKm, minutes + o.minutes, orders + o.orders, shifts + o.shifts,
+        extra + o.extra, km + o.km, minutes + o.minutes, orders + o.orders, shifts + o.shifts,
     )
 }

@@ -14,10 +14,13 @@ data class ShiftEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val startTime: Long,
     val endTime: Long? = null,
+    /** Устаревшее: холостой пробег (v1). Используется только для старых смен без GPS. */
     val idleKm: Double = 0.0,
     val extraExpenses: Double = 0.0,
     /** Пробег по GPS за смену. */
     val trackedKm: Double = 0.0,
+    /** Пробег, введённый водителем вручную (по одометру); имеет приоритет над GPS. */
+    val manualKm: Double? = null,
     /** Текущий заказ: начало и накопленный по GPS пробег. */
     val activeOrderStart: Long? = null,
     val activeOrderKm: Double = 0.0,
@@ -84,8 +87,10 @@ data class ShiftWithOrders(
     @Relation(parentColumn = "id", entityColumn = "shiftId") val orders: List<OrderEntity>,
 )
 
-/** Пробег без пассажира: копится по GPS, пока нет активного заказа, либо вводится вручную. */
-fun ShiftWithOrders.effectiveIdleKm(): Double = shift.idleKm
+/** Общий пробег смены: ручной ввод > GPS > старые данные (холостой + заказы). */
+fun ShiftWithOrders.totalKm(): Double = shift.manualKm
+    ?: shift.trackedKm.takeIf { it > 0 }
+    ?: (shift.idleKm + orders.sumOf { it.distanceKm })
 
 fun OrderEntity.toInput() = OrderInput(timestamp, price, distanceKm, durationMin)
 
@@ -96,7 +101,7 @@ fun ShiftEntity.pausedMinutesAt(now: Long): Int =
 fun ShiftWithOrders.toInput(now: Long) = ShiftInput(
     startTime = shift.startTime,
     endTime = shift.endTime ?: now,
-    idleKm = effectiveIdleKm(),
+    totalKm = totalKm(),
     extraExpenses = shift.extraExpenses,
     orders = orders.map { it.toInput() },
     pausedMinutes = if (shift.endTime == null) shift.pausedMinutesAt(now) else shift.pausedMinutes,

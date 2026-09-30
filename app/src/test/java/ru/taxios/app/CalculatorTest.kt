@@ -29,7 +29,7 @@ class CalculatorTest {
     fun `shift summary aggregates costs and rate`() {
         val start = 0L
         val shift = ShiftInput(
-            startTime = start, endTime = start + 14 * 3_600_000L, idleKm = 30.0, extraExpenses = 0.0,
+            startTime = start, endTime = start + 14 * 3_600_000L, totalKm = 280.0, extraExpenses = 0.0,
             orders = listOf(OrderInput(start, 7500.0, 250.0, 600)),
         )
         val sum = Calculator.summarize(shift, s)
@@ -95,7 +95,7 @@ class CalculatorTest {
         fun day(d: Int, h: Int) = LocalDateTime.of(2026, 1, d, h, 0).toInstant(zone).toEpochMilli()
         // Понедельник 5 января: хорошая смена утром, вечером плохо
         val mon = ShiftInput(
-            day(5, 7), day(5, 23), 20.0, 0.0,
+            day(5, 7), day(5, 23), 70.0, 0.0,
             listOf(
                 OrderInput(day(5, 7), 700.0, 10.0, 60), OrderInput(day(5, 8), 700.0, 10.0, 60),
                 OrderInput(day(5, 9), 700.0, 10.0, 60), OrderInput(day(5, 21), 250.0, 10.0, 60),
@@ -104,12 +104,12 @@ class CalculatorTest {
         )
         // Вторник 6 января: короткая смена, слабая
         val tue = ShiftInput(
-            day(6, 12), day(6, 16), 10.0, 0.0,
+            day(6, 12), day(6, 16), 30.0, 0.0,
             listOf(OrderInput(day(6, 12), 300.0, 10.0, 60), OrderInput(day(6, 13), 300.0, 10.0, 60)),
         )
         val out = Analytics.insights(listOf(mon, tue), s, zone)
         assertTrue(out.any { it.contains("Лучшее время: 07:00–10:00") })
         assertTrue(out.any { it.startsWith("После 21:00 доход/час падает") })
-        assertTrue(out.any { it.contains("Холостой пробег") })
+        assertTrue(out.any { it.contains("На один заказ приходится") })
     }
 }

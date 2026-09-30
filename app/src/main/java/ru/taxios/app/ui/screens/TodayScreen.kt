@@ -76,6 +76,7 @@ fun TodayScreen(vm: MainViewModel) {
     var showFinishOrder by remember { mutableStateOf(false) }
     var showEndShift by remember { mutableStateOf(false) }
     var priceFor by remember { mutableStateOf<OrderEntity?>(null) }
+    var showEditKm by remember { mutableStateOf(false) }
     var listenerEnabled by remember { mutableStateOf(TaxiNotificationListener.isEnabled(context)) }
     var screenReaderEnabled by remember { mutableStateOf(ScreenReaderService.isEnabled(context)) }
     val sum = state.summary
@@ -112,10 +113,24 @@ fun TodayScreen(vm: MainViewModel) {
                     Button(onClick = { startShiftWithPermissions() }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Начать смену", style = MaterialTheme.typography.titleMedium) }
                 } else {
                     Text("С ${active.startTime.time()} · работа ${state.activeMinutes.hhmm()} · заказов: ${state.activeOrders.size}")
-                    Text(
-                        "Пробег ${active.trackedKm.km()} · холостой ${active.idleKm.km()}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium,
-                    )
+                    val shiftKm = active.manualKm ?: active.trackedKm
+                    val kmCost = Calculator.fuelCost(shiftKm, s) + Calculator.depreciation(shiftKm, s)
+                    Row(
+                        Modifier.fillMaxWidth().clickable { showEditKm = true },
+                        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column {
+                            Text("🚗 Пробег за смену", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                if (active.manualKm != null) "введён вручную · GPS ${active.trackedKm.km()}" else "по GPS · нажмите, чтобы поправить",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(shiftKm.km(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text("бензин + амортизация ≈ ${kmCost.rub()}", style = MaterialTheme.typography.bodySmall, color = Red)
+                        }
+                    }
                     if (state.pausedMinutes > 0 || active.pausedSince != null) {
                         Text("Пауза: ${state.pausedMinutes.hhmm()}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
                     }
@@ -133,23 +148,9 @@ fun TodayScreen(vm: MainViewModel) {
                             colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = MaterialTheme.colorScheme.onPrimary),
                         ) { Text("▶ Заказ принят", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
                         OutlinedButton(onClick = { vm.pauseShift() }, modifier = Modifier.fillMaxWidth()) { Text("⏸ Пауза (обед, отдых)") }
-                    } else if (active.rideStart == null) {
-                        Text(
-                            "Еду на подачу: ${state.activeOrderMinutes} мин · ${active.activeOrderKm.km()} (холостой)",
-                            color = Amber, fontWeight = FontWeight.Bold,
-                        )
-                        Button(
-                            onClick = { vm.startRide() },
-                            modifier = Modifier.fillMaxWidth().height(64.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = MaterialTheme.colorScheme.onPrimary),
-                        ) { Text("🧍 Пассажир сел", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
-                        if (screenReaderEnabled) {
-                            Text("Отметится само, когда в Яндекс Про начнётся поездка.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        TextButton(onClick = { vm.cancelOrder() }, modifier = Modifier.fillMaxWidth()) { Text("Отменить заказ", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     } else {
                         Text(
-                            "Поездка А→Б: ${state.rideMinutes} мин · ${active.rideKm.km()} · подача ${(active.activeOrderKm - active.rideKm).coerceAtLeast(0.0).km()}",
+                            "Заказ идёт: ${state.activeOrderMinutes} мин · ${active.activeOrderKm.km()}",
                             color = Green, fontWeight = FontWeight.Bold,
                         )
                         active.lastSeenPrice?.let {
@@ -221,7 +222,7 @@ fun TodayScreen(vm: MainViewModel) {
                 StatRow("⛽ Расходы", sum.expenses.rubSigned(), valueColor = MaterialTheme.colorScheme.onSurfaceVariant)
                 StatRow("💵 Чистыми", sum.net.rub(), valueColor = MaterialTheme.colorScheme.primary, emphasized = true)
                 StatRow("⏱ Работа", sum.minutes.hhmm())
-                StatRow("🚗 Пробег", "${sum.km.km()} (пустой ${sum.idleKm.km()})")
+                StatRow("🚗 Пробег", sum.km.km())
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("📈 Доход/час", style = MaterialTheme.typography.titleMedium)
@@ -270,8 +271,8 @@ fun TodayScreen(vm: MainViewModel) {
     }
     if (showFinishOrder && active != null) {
         FinishOrderDialog(
-            trackedKm = if (active.rideStart != null) active.rideKm else active.activeOrderKm,
-            minutes = if (active.rideStart != null) state.rideMinutes else state.activeOrderMinutes,
+            trackedKm = active.activeOrderKm,
+            minutes = state.activeOrderMinutes,
             suggestedPrice = active.lastSeenPrice ?: state.suggestion?.price,
             settings = s,
             onDismiss = { showFinishOrder = false },
@@ -280,9 +281,15 @@ fun TodayScreen(vm: MainViewModel) {
             showFinishOrder = false
         }
     }
-    if (showEndShift) {
-        EndShiftDialog(trackedIdle = active?.takeIf { it.trackedKm > 0 }?.idleKm, onDismiss = { showEndShift = false }) { idle, extra ->
-            vm.endShift(idle, extra)
+    if (showEditKm && active != null) {
+        EditKmDialog(active.trackedKm, active.manualKm, onDismiss = { showEditKm = false }) { km ->
+            vm.setShiftKm(km)
+            showEditKm = false
+        }
+    }
+    if (showEndShift && active != null) {
+        EndShiftDialog(trackedKm = active.trackedKm, manualKm = active.manualKm, onDismiss = { showEndShift = false }) { km, extra ->
+            vm.endShift(km, extra)
             showEndShift = false
         }
     }
@@ -321,8 +328,7 @@ private fun OrderRow(order: OrderEntity, s: CostSettings, onDelete: () -> Unit, 
                 }
                 Text(
                     "${order.distanceKm.km()} · ${order.durationMin} мин" +
-                        (if (order.pickupKm > 0 || order.pickupMin > 0) " · подача ${order.pickupKm.km()}/${order.pickupMin} мин" else "") +
-                        " · чистыми ≈ ${Calculator.orderNet(order.price, order.distanceKm, s).rub()}",
+                        " · после комиссии ${(order.price - Calculator.commission(order.price, s)).rub()}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -422,24 +428,46 @@ fun FinishOrderDialog(
 }
 
 @Composable
-fun EndShiftDialog(trackedIdle: Double?, onDismiss: () -> Unit, onConfirm: (Double, Double) -> Unit) {
-    var idle by remember { mutableStateOf(trackedIdle?.edit() ?: "") }
+fun EditKmDialog(trackedKm: Double, manualKm: Double?, onDismiss: () -> Unit, onConfirm: (Double?) -> Unit) {
+    var km by remember { mutableStateOf((manualKm ?: trackedKm).edit()) }
+    val k = km.parseNumber()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Пробег за смену") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("По GPS: ${trackedKm.km()}. Введите пробег по одометру, если GPS ошибся.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                NumberField(km, { km = it }, "Пробег", suffix = "км")
+            }
+        },
+        confirmButton = { TextButton(enabled = k != null && k >= 0, onClick = { onConfirm(k) }) { Text("Сохранить") } },
+        dismissButton = {
+            Row {
+                if (manualKm != null) TextButton(onClick = { onConfirm(null) }) { Text("Вернуть GPS") }
+                TextButton(onClick = onDismiss) { Text("Отмена") }
+            }
+        },
+    )
+}
+
+@Composable
+fun EndShiftDialog(trackedKm: Double, manualKm: Double?, onDismiss: () -> Unit, onConfirm: (Double?, Double) -> Unit) {
+    var km by remember { mutableStateOf((manualKm ?: trackedKm).edit()) }
     var extra by remember { mutableStateOf("") }
-    val i = if (idle.isBlank()) 0.0 else idle.parseNumber()
+    val k = km.parseNumber()
     val e = if (extra.isBlank()) 0.0 else extra.parseNumber()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Завершить смену") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                NumberField(
-                    idle, { idle = it }, "Холостой пробег", suffix = "км",
-                    supporting = if (trackedIdle != null) "Посчитано по GPS, можно поправить" else "Километры без пассажира за смену",
-                )
+                NumberField(km, { km = it }, "Пробег за смену", suffix = "км", supporting = "По GPS ${trackedKm.km()}, можно поправить по одометру")
                 NumberField(extra, { extra = it }, "Прочие расходы", suffix = "₽", supporting = "Мойка, парковка, еда и т.п.")
             }
         },
-        confirmButton = { TextButton(enabled = i != null && e != null, onClick = { onConfirm(i!!, e!!) }) { Text("Завершить") } },
+        confirmButton = {
+            TextButton(enabled = k != null && k >= 0 && e != null, onClick = { onConfirm(if (k == trackedKm) null else k, e!!) }) { Text("Завершить") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
     )
 }

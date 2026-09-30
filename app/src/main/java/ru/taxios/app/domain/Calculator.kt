@@ -14,8 +14,7 @@ object Calculator {
 
     fun summarize(shift: ShiftInput, s: CostSettings): ShiftSummary {
         val gross = shift.orders.sumOf { it.price }
-        val orderKm = shift.orders.sumOf { it.distanceKm }
-        val totalKm = orderKm + shift.idleKm
+        val totalKm = shift.totalKm
         return ShiftSummary(
             gross = gross,
             commission = commission(gross, s),
@@ -23,7 +22,6 @@ object Calculator {
             depreciation = depreciation(totalKm, s),
             extra = shift.extraExpenses,
             km = totalKm,
-            idleKm = shift.idleKm,
             minutes = shift.minutes,
             orders = shift.orders.size,
             shifts = 1,
