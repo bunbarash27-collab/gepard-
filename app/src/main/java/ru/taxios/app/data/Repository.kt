@@ -3,6 +3,10 @@ package ru.taxios.app.data
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import ru.taxios.app.domain.CostSettings
+import ru.taxios.app.tracking.OrderTextParser
+import java.time.Instant
+import java.time.ZoneId
+import kotlin.math.abs
 
 class Repository(private val db: AppDatabase, private val settingsStore: SettingsStore) {
     val settings: Flow<CostSettings> get() = settingsStore.settings
@@ -19,35 +23,14 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
     suspend fun startShift(): Long = db.shiftDao().insert(ShiftEntity(startTime = System.currentTimeMillis()))
 
     /** Закрывает смену. [manualKm] — пробег по одометру, если водитель поправил GPS. */
-    suspend fun endShift(shift: ShiftEntity, manualKm: Double?, extraExpenses: Double) {
-        val fresh = db.shiftDao().getById(shift.id) ?: shift
-        val now = System.currentTimeMillis()
-        db.shiftDao().update(
-            fresh.copy(
-                endTime = now, manualKm = manualKm, extraExpenses = extraExpenses,
-                activeOrderStart = null, activeOrderKm = 0.0, rideStart = null, rideKm = 0.0,
-                pausedSince = null, pausedMinutes = fresh.pausedMinutesAt(now),
-            ),
-        )
-    }
+    suspend fun endShift(shift: ShiftEntity, manualKm: Double?, extraExpenses: Double) =
+        db.shiftDao().close(shift.id, System.currentTimeMillis(), manualKm, extraExpenses)
 
-    suspend fun setShiftKm(shiftId: Long, manualKm: Double?) {
-        val shift = db.shiftDao().getById(shiftId) ?: return
-        db.shiftDao().update(shift.copy(manualKm = manualKm))
-    }
+    suspend fun setShiftKm(shiftId: Long, manualKm: Double?) = db.shiftDao().setManualKm(shiftId, manualKm)
 
-    suspend fun pauseShift(shiftId: Long) {
-        val shift = db.shiftDao().getById(shiftId) ?: return
-        if (shift.pausedSince != null) return
-        db.shiftDao().update(shift.copy(pausedSince = System.currentTimeMillis()))
-    }
+    suspend fun pauseShift(shiftId: Long) = db.shiftDao().pause(shiftId, System.currentTimeMillis())
 
-    suspend fun resumeShift(shiftId: Long) {
-        val shift = db.shiftDao().getById(shiftId) ?: return
-        val since = shift.pausedSince ?: return
-        val minutes = ((System.currentTimeMillis() - since) / 60_000L).toInt()
-        db.shiftDao().update(shift.copy(pausedSince = null, pausedMinutes = shift.pausedMinutes + minutes))
-    }
+    suspend fun resumeShift(shiftId: Long) = db.shiftDao().resume(shiftId, System.currentTimeMillis())
 
     suspend fun deleteShift(shift: ShiftEntity) = db.shiftDao().delete(shift)
 
@@ -56,9 +39,7 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
     }
 
     suspend fun startOrder(shiftId: Long) {
-        val shift = db.shiftDao().getById(shiftId) ?: return
-        if (shift.activeOrderStart != null) return
-        db.shiftDao().update(shift.copy(activeOrderStart = System.currentTimeMillis(), activeOrderKm = 0.0, rideStart = null, rideKm = 0.0))
+        db.shiftDao().openOrder(shiftId, System.currentTimeMillis())
     }
 
     /**
@@ -78,36 +59,54 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
             auto = true, priceMissing = finalPrice == null,
         )
         val id = db.orderDao().insert(order)
-        db.shiftDao().update(shift.copy(activeOrderStart = null, activeOrderKm = 0.0, rideStart = null, rideKm = 0.0, lastSeenPrice = null, lastSeenPriceAt = null))
+        db.shiftDao().clearOrder(shiftId)
         return order.copy(id = id)
     }
 
-    suspend fun cancelOrder(shiftId: Long) {
-        val shift = db.shiftDao().getById(shiftId) ?: return
-        db.shiftDao().update(shift.copy(activeOrderStart = null, activeOrderKm = 0.0, rideStart = null, rideKm = 0.0, lastSeenPrice = null, lastSeenPriceAt = null))
-    }
+    suspend fun cancelOrder(shiftId: Long) = db.shiftDao().clearOrder(shiftId)
 
-    /** Экран поездки Яндекс Про («Стоимость поездки…»): запоминаем цену текущего заказа. */
+    /** Экран поездки Яндекс Про («Стоимость поездки…»): отмечаем, что пассажир в машине, и запоминаем цену. */
     suspend fun onRideScreen(price: Double?, at: Long) {
-        if (price == null) return
         val shift = db.shiftDao().getActive() ?: return
-        if (shift.lastSeenPrice != price || shift.lastSeenPriceAt == null) {
-            db.shiftDao().update(shift.copy(lastSeenPrice = price, lastSeenPriceAt = at))
-        }
+        if (price != null) db.shiftDao().setSeenPrice(shift.id, price, at)
+        else db.shiftDao().markRideSeen(shift.id, at)
     }
 
-    /** Экран «Оплачено» после поездки проставляет цену только что закрытому заказу. */
+    /** Экран «Оплачено» / «Получите наличными» после поездки проставляет цену только что закрытому заказу. */
     suspend fun onPaidScreen(price: Double, at: Long) {
         val shift = db.shiftDao().getActive() ?: return
         if (shift.activeOrderStart != null) {
-            if (shift.lastSeenPrice != price) db.shiftDao().update(shift.copy(lastSeenPrice = price, lastSeenPriceAt = at))
+            db.shiftDao().setSeenPrice(shift.id, price, at)
             return
         }
         val missing = db.orderDao().latestMissingPrice(shift.id) ?: return
         val finishedAt = missing.timestamp + missing.durationMin * 60_000L
         if (at - finishedAt <= COMPLETION_WINDOW_MS) {
-            db.orderDao().update(missing.copy(price = price, priceMissing = false))
+            db.orderDao().fillPrice(missing.id, price)
         }
+    }
+
+    /**
+     * Экран «Детализация» Яндекс Про: список заказов за день со временем подачи и ценой.
+     * Заполняет суммы заказов без цены за последние сутки, сопоставляя по времени.
+     */
+    suspend fun onHistoryScreen(entries: List<OrderTextParser.HistoryEntry>, at: Long): Int {
+        val zone = ZoneId.systemDefault()
+        val missing = db.orderDao().missingPriceSince(at - 24 * 3_600_000L)
+        if (missing.isEmpty()) return 0
+        val used = HashSet<Int>()
+        var filled = 0
+        for (order in missing) {
+            val startMin = Instant.ofEpochMilli(order.timestamp).atZone(zone).let { it.hour * 60 + it.minute }
+            val endMin = startMin + order.durationMin
+            val match = entries.withIndex()
+                .filter { it.index !in used && it.value.minuteOfDay in (startMin - HISTORY_TOLERANCE_MIN)..(endMin + HISTORY_TOLERANCE_MIN) }
+                .minByOrNull { (_, e) -> if (e.minuteOfDay in startMin..endMin) 0 else minOf(abs(e.minuteOfDay - startMin), abs(e.minuteOfDay - endMin)) }
+                ?: continue
+            used += match.index
+            filled += db.orderDao().fillPrice(order.id, match.value.price)
+        }
+        return filled
     }
 
     suspend fun addDistance(shiftId: Long, deltaKm: Double) = db.shiftDao().addDistance(shiftId, deltaKm)
@@ -133,5 +132,7 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
         const val OFFER_LOOKBACK_MS = 3 * 60_000L
         /** Сколько ждём экран «Итого» после закрытия заказа. */
         const val COMPLETION_WINDOW_MS = 4 * 60_000L
+        /** Допуск при сопоставлении заказа со строкой истории, минут. */
+        const val HISTORY_TOLERANCE_MIN = 2
     }
 }

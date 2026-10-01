@@ -100,13 +100,16 @@ class TaxiNotificationListener : NotificationListenerService() {
         val repo = (application as TaxiApp).repository
         val shift = repo.getActiveShift() ?: return
         val start = shift.activeOrderStart ?: return
-        // Меньше минуты и без движения — отмена, а не поездка.
-        if (System.currentTimeMillis() - start < 60_000L && shift.activeOrderKm < 0.1) {
+        val now = System.currentTimeMillis()
+        // Экран поездки так и не появился при работающем чтении экрана — пассажира не было, это отмена.
+        val noRide = ScreenReaderService.isAlive(now) && shift.rideSeenAt == null && shift.lastSeenPrice == null
+        val tooShort = now - start < 60_000L && shift.activeOrderKm < 0.1
+        if (noRide || tooShort) {
             repo.cancelOrder(shiftId)
             return
         }
         val order = repo.finishOrder(shiftId, price = null) ?: return
-        askForPrice(order)
+        if (order.priceMissing) askForPrice(order)
     }
 
     private fun askForPrice(order: OrderEntity) {

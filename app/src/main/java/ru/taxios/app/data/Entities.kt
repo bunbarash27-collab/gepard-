@@ -33,6 +33,8 @@ data class ShiftEntity(
     /** Последняя стоимость, увиденная на экране Яндекс Про, и когда. */
     val lastSeenPrice: Double? = null,
     val lastSeenPriceAt: Long? = null,
+    /** Когда впервые появился экран поездки текущего заказа (пассажир в машине). */
+    val rideSeenAt: Long? = null,
 )
 
 @Entity(

@@ -183,6 +183,12 @@ fun TodayScreen(vm: MainViewModel) {
         if (missing.isNotEmpty()) {
             item {
                 SectionCard("✏️ Укажите сумму · ${missing.size}") {
+                    if (screenReaderEnabled) {
+                        Text(
+                            "Откройте в Яндекс Про «Доход → Детализация» — суммы подставятся сами по времени заказа.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     missing.forEach { o ->
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text("${o.timestamp.time()} · ${o.distanceKm.km()} · ${o.durationMin} мин", modifier = Modifier.weight(1f))

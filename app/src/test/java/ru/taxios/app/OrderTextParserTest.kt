@@ -43,6 +43,9 @@ class OrderTextParserTest {
         val paid = OrderTextParser.classifyScreen(listOf("Оплачено картой", "250 ₽"))
         assertEquals(OrderTextParser.Screen.PAID, paid.screen)
         assertEquals(250.0, paid.price!!, 0.01)
+        val cash = OrderTextParser.classifyScreen(listOf("Получите наличными", "154 ₽", "30 сентября — 6 октября", "+ 1 000 ₽"))
+        assertEquals(OrderTextParser.Screen.PAID, cash.screen)
+        assertEquals(154.0, cash.price!!, 0.01)
         // Дневной итог и бонус «Приоритет» — не цена заказа.
         val totals = OrderTextParser.classifyScreen(listOf("Приоритет", "+49", "22 заказа", "3 479,93 ₽"))
         assertEquals(OrderTextParser.Screen.OTHER, totals.screen)
@@ -51,5 +54,21 @@ class OrderTextParserTest {
         val pickup = OrderTextParser.classifyScreen(listOf("А", "улица Чапаева, 174", "Б", "улица Лермонтова, 11/1", "Пассажир", "Платная подача", "+50 ₽"))
         assertEquals(OrderTextParser.Screen.OTHER, pickup.screen)
         assertNull(pickup.price)
+    }
+
+    @Test
+    fun `history screen from real log`() {
+        val lines = listOf(
+            "Детализация", "Сегодня · 7 заказов", " ", "1 070,83 ₽", "Сегодня", "Картой · 533 ₽", "Наличными · 722 ₽",
+            "Комиссия сервиса · -133,97 ₽", "В счёт уплаты налога · -50,2 ₽",
+            "08:30", "Заказ улица Чкалова, 1Б, подъезд 1", "131,4 ₽",
+            "08:19", "Заказ Красноармейская улица, 88", "119,46 ₽",
+            "08:08", "Заказ Парковый проспект, 5", "187,72 ₽",
+        )
+        val info = OrderTextParser.classifyScreen(lines)
+        assertEquals(OrderTextParser.Screen.HISTORY, info.screen)
+        assertEquals(3, info.history.size)
+        assertEquals(8 * 60 + 19, info.history[1].minuteOfDay)
+        assertEquals(119.46, info.history[1].price, 0.01)
     }
 }

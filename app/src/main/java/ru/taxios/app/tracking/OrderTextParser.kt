@@ -28,15 +28,21 @@ object OrderTextParser {
 
     /** Метки экрана Яндекс Про, за которыми идёт стоимость именно этой поездки. */
     private val rideLabel = Regex("стоимость поездки", RegexOption.IGNORE_CASE)
-    private val paidLabel = Regex("^оплачено", RegexOption.IGNORE_CASE)
+    private val paidLabel = Regex("^(оплачено|получите наличными|оплата от пассажира)", RegexOption.IGNORE_CASE)
+    private val timeLine = Regex("""^\d{1,2}:\d{2}$""")
+    private val historyOrderLine = Regex("""^заказ\s""", RegexOption.IGNORE_CASE)
 
-    enum class Screen { RIDE, PAID, OTHER }
+    enum class Screen { RIDE, PAID, HISTORY, OTHER }
 
-    data class ScreenInfo(val screen: Screen, val price: Double?)
+    /** Строка истории заказов: время (минуты от полуночи) и стоимость. */
+    data class HistoryEntry(val minuteOfDay: Int, val price: Double)
+
+    data class ScreenInfo(val screen: Screen, val price: Double?, val history: List<HistoryEntry> = emptyList())
 
     /**
      * Распознаёт экран Яндекс Про по строкам. RIDE — пассажир в машине (есть «Стоимость поездки…»
-     * и цена), PAID — экран после оплаты («Оплачено картой» + цена). Дневные итоги, бонусы
+     * и цена), PAID — экран после оплаты («Оплачено картой» / «Получите наличными» + цена),
+     * HISTORY — список заказов за день («08:19 / Заказ … / 119,46 ₽»). Дневные итоги, бонусы
      * «Приоритет», платная подача «+50 ₽» и прочее — OTHER без цены.
      */
     fun classifyScreen(lines: List<String>): ScreenInfo {
@@ -50,7 +56,28 @@ object OrderTextParser {
                 priceAfter(lines, i)?.let { return ScreenInfo(Screen.PAID, it) }
             }
         }
+        val history = parseHistory(lines)
+        if (history.isNotEmpty()) return ScreenInfo(Screen.HISTORY, null, history)
         return ScreenInfo(Screen.OTHER, null)
+    }
+
+    fun parseHistory(lines: List<String>): List<HistoryEntry> {
+        val out = mutableListOf<HistoryEntry>()
+        var i = 0
+        while (i + 2 < lines.size) {
+            val t = lines[i].trim()
+            if (timeLine.matches(t) && historyOrderLine.containsMatchIn(lines[i + 1].trim())) {
+                val price = parse(lines[i + 2]).price
+                val (h, m) = t.split(':').map { it.toInt() }
+                if (price != null && h < 24 && m < 60) {
+                    out += HistoryEntry(h * 60 + m, price)
+                    i += 3
+                    continue
+                }
+            }
+            i++
+        }
+        return out
     }
 
     private fun priceAfter(lines: List<String>, index: Int): Double? =

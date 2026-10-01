@@ -27,6 +27,7 @@ class ScreenReaderService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (event.packageName?.toString() !in TaxiNotificationListener.WATCHED_PACKAGES) return
+        lastEventAt = System.currentTimeMillis()
         val root = rootInActiveWindow ?: return
         // Событие может прийти от Яндекс Про, пока на экране другое приложение (в том числе TAXI OS).
         if (root.packageName?.toString() !in TaxiNotificationListener.WATCHED_PACKAGES) return
@@ -38,14 +39,16 @@ class ScreenReaderService : AccessibilityService() {
         val priceLines = lines.filterIndexed { i, l -> OrderTextParser.parse(l).price != null || (i + 1 < lines.size && OrderTextParser.parse(lines[i + 1]).price != null) }
         scope.launch {
             val repo = (application as TaxiApp).repository
+            var filled = 0
             when (info.screen) {
                 OrderTextParser.Screen.RIDE -> repo.onRideScreen(info.price, now)
                 OrderTextParser.Screen.PAID -> repo.onPaidScreen(info.price!!, now)
+                OrderTextParser.Screen.HISTORY -> filled = repo.onHistoryScreen(info.history, now)
                 OrderTextParser.Screen.OTHER -> Unit
             }
             // В журнал — только распознанные экраны и экраны с суммами, без повторов каждые 5 секунд.
             if (priceLines.isEmpty()) return@launch
-            val joined = "${info.screen}\n" + priceLines.filterNot { it.matches(Regex("""\d{1,2}:\d{2}""")) }.joinToString("\n")
+            val joined = "${info.screen}\n" + priceLines.filterNot { info.screen != OrderTextParser.Screen.HISTORY && it.matches(Regex("""\d{1,2}:\d{2}""")) }.joinToString("\n")
             if (joined != lastLogged && now - lastLoggedAt > 5_000) {
                 lastLogged = joined
                 lastLoggedAt = now
@@ -55,9 +58,11 @@ class ScreenReaderService : AccessibilityService() {
                         title = when (info.screen) {
                             OrderTextParser.Screen.RIDE -> "Поездка (пассажир в машине)"
                             OrderTextParser.Screen.PAID -> "Оплата"
+                            OrderTextParser.Screen.HISTORY -> "История заказов" + (if (filled > 0) " · заполнено сумм: $filled" else "")
                             OrderTextParser.Screen.OTHER -> "Экран с суммами"
                         },
-                        text = joined.substringAfter("\n"), price = info.price,
+                        text = (if (info.price != null) "Распознано: ${info.price} ₽\n" else "") + joined.substringAfter("\n"),
+                        price = info.price,
                     ),
                 )
             }
@@ -80,6 +85,12 @@ class ScreenReaderService : AccessibilityService() {
 
     companion object {
         private const val MAX_NODES = 400
+
+        /** Время последнего события от Яндекс Про — признак, что служба жива. */
+        @Volatile var lastEventAt: Long = 0L
+            private set
+
+        fun isAlive(now: Long = System.currentTimeMillis()): Boolean = now - lastEventAt < 10 * 60_000L
 
         fun isEnabled(context: Context): Boolean {
             val flat = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
