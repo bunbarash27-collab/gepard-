@@ -1,12 +1,16 @@
+import { nameFromOzonUrl } from '../shared/ozonText';
+
 export interface OzonParseResult {
   ok: boolean;
   sku?: string;
   name?: string;
+  /** True when the name was only reconstructed from the URL slug. */
+  approximate?: boolean;
   imageUrl?: string;
   message: string;
 }
 
-const MANUAL = 'Заполните данные товара вручную — это займёт пару минут.';
+const MANUAL = 'Заполните данные товара вручную или вставьте текст карточки ниже.';
 
 /**
  * Best-effort Ozon card lookup. Ozon usually blocks server-side requests (anti-bot),
@@ -25,7 +29,8 @@ export async function parseOzonUrl(input: string): Promise<OzonParseResult> {
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36', 'Accept-Language': 'ru-RU,ru;q=0.9' },
-      redirect: 'follow',
+      // Ozon answers server requests with an endless 307 anti-bot loop; fail fast instead of following it.
+      redirect: 'manual',
       signal: AbortSignal.timeout(7000),
     });
     if (res.ok) {
@@ -39,5 +44,12 @@ export async function parseOzonUrl(input: string): Promise<OzonParseResult> {
   } catch {
     // fall through to manual
   }
-  return { ok: false, sku, message: `Не удалось автоматически получить данные с Ozon${sku ? ` (артикул ${sku} сохранён)` : ''}. ${MANUAL}` };
+  const name = nameFromOzonUrl(url.pathname);
+  return {
+    ok: false,
+    sku,
+    name,
+    approximate: Boolean(name),
+    message: `Ozon закрыл прямой доступ к странице (защита от ботов)${sku ? `, артикул ${sku}` : ''}.${name ? ' Название подставлено из ссылки — проверьте его.' : ''} ${MANUAL}`,
+  };
 }

@@ -128,3 +128,20 @@ describe('gemini provider', () => {
     }
   }, 10_000);
 });
+
+describe('ozon helpers', () => {
+  it('restores a readable Russian name from the URL slug', async () => {
+    const { nameFromOzonUrl } = await import('../shared/ozonText');
+    expect(nameFromOzonUrl('https://www.ozon.ru/product/magniy-v6-400mg-magniy-tsitrat-120-tabletok-320244429/')).toBe('Магний V6 400 мг магний цитрат 120 таблеток');
+    expect(nameFromOzonUrl('/product/naushniki-besprovodnye-chernye-555555/')).toBe('Наушники беспроводные черные');
+    expect(nameFromOzonUrl('https://www.ozon.ru/category/x/')).toBeUndefined();
+  });
+
+  it('demo extraction finds price and specs in pasted page text', async () => {
+    const { extractFromPageText } = await import('../shared/ozonText');
+    const r = extractFromPageText('Каталог\nМагний B6\n1 290 ₽\n2 450 ₽\nХарактеристики\nФорма выпуска: таблетки\nКоличество: 120 шт', '/product/magniy-v6-320244429/');
+    expect(r.price).toBe('1290');
+    expect(r.specs).toBe('Форма выпуска: таблетки\nКоличество: 120 шт');
+    expect(r.name).toBe('Магний V6');
+  });
+});

@@ -15,7 +15,7 @@ try {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const isProd = process.env.NODE_ENV === 'production';
 const port = Number(process.env.PORT) || 3000;
-const TASKS: AITask[] = ['analyze', 'angles', 'script', 'viral', 'continue', 'social'];
+const TASKS: AITask[] = ['analyze', 'angles', 'script', 'viral', 'continue', 'social', 'extract'];
 
 const ai = new AIService(providerFromEnv(process.env));
 const app = express();

@@ -9,6 +9,9 @@ export function ProductForm({ value, onChange, compact }: { value: ProductInput;
   const fileRef = useRef<HTMLInputElement>(null);
   const [parsing, setParsing] = useState(false);
   const [ozonMsg, setOzonMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pageText, setPageText] = useState('');
+  const [extracting, setExtracting] = useState(false);
   const set = (k: keyof ProductInput) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => onChange({ ...value, [k]: e.target.value });
 
   const parse = async () => {
@@ -17,11 +20,34 @@ export function ProductForm({ value, onChange, compact }: { value: ProductInput;
     try {
       const r = await api.parseOzon(value.ozonUrl);
       setOzonMsg({ ok: r.ok, text: r.message });
-      if (r.ok && r.name) onChange({ ...value, name: r.name });
+      if (r.name && (r.ok || !value.name.trim())) onChange({ ...value, name: r.name });
+      if (!r.ok) setPasteOpen(true);
     } catch (e) {
       setOzonMsg({ ok: false, text: `${(e as Error).message}. Заполните данные товара вручную.` });
     } finally {
       setParsing(false);
+    }
+  };
+
+  const extract = async () => {
+    if (pageText.trim().length < 30) return toast('Вставьте текст страницы товара (Ctrl+A → Ctrl+C на странице Ozon)', 'warn');
+    setExtracting(true);
+    try {
+      const r = await api.extract(pageText, value.ozonUrl);
+      const filled = Object.entries(r.data).filter(([, v]) => v);
+      if (!filled.length) return toast('Не удалось найти данные товара в тексте — заполните поля вручную', 'warn');
+      onChange({ ...value, ...Object.fromEntries(filled) });
+      if (r.notice?.startsWith('AI-провайдер')) toast(r.notice, 'warn');
+      toast(
+        r.mode === 'demo'
+          ? `Demo mode: заполнено полей — ${filled.length} (название, цена, характеристики). С AI разбор полнее.`
+          : `Поля заполнены по тексту карточки (${filled.length}). Проверьте их перед анализом.`,
+        r.mode === 'demo' ? 'info' : 'ok',
+      );
+    } catch (e) {
+      toast(`Ошибка разбора: ${(e as Error).message}`, 'error');
+    } finally {
+      setExtracting(false);
     }
   };
 
@@ -46,7 +72,8 @@ export function ProductForm({ value, onChange, compact }: { value: ProductInput;
             <Button onClick={parse} loading={parsing}>Получить</Button>
           </div>
           {ozonMsg && <div className={`note ${ozonMsg.ok ? 'note-ok' : 'note-warn'}`}>{ozonMsg.text}</div>}
-          {!ozonMsg && <div className="field-hint">Автопарсинг Ozon работает в режиме best-effort. Если страница недоступна — заполните поля ниже.</div>}
+          {!ozonMsg && <div className="field-hint">Ozon часто блокирует автоматическое получение данных. Тогда используйте «Вставить текст карточки».</div>}
+          <button type="button" className="link" onClick={() => setPasteOpen((v) => !v)}>{pasteOpen ? '▾' : '▸'} Вставить текст карточки Ozon</button>
         </div>
         <div className="or">или</div>
         <div
@@ -65,6 +92,23 @@ export function ProductForm({ value, onChange, compact }: { value: ProductInput;
           </div>
         </div>
       </div>
+
+      {pasteOpen && (
+        <div className="paste-box">
+          <div className="source-title">📋 ТЕКСТ КАРТОЧКИ OZON</div>
+          <ol className="paste-steps">
+            <li>Откройте страницу товара на Ozon в своём браузере.</li>
+            <li>Нажмите <kbd>Ctrl</kbd>+<kbd>A</kbd>, затем <kbd>Ctrl</kbd>+<kbd>C</kbd> — скопируется весь текст страницы.</li>
+            <li>Вставьте сюда (<kbd>Ctrl</kbd>+<kbd>V</kbd>) и нажмите «Заполнить поля».</li>
+          </ol>
+          <textarea className="input" rows={6} value={pageText} onChange={(e) => setPageText(e.target.value)} placeholder="Вставьте сюда текст со страницы товара…" aria-label="Текст карточки Ozon" />
+          <div className="row wrap">
+            <Button variant="primary" onClick={extract} loading={extracting}>✨ Заполнить поля</Button>
+            {pageText && <Button variant="ghost" onClick={() => setPageText('')}>Очистить</Button>}
+            <span className="field-hint">Проверьте поля после заполнения. Фото товара загрузите отдельно.</span>
+          </div>
+        </div>
+      )}
 
       <div className="form-grid">
         <Field label="Название товара *"><input className="input" value={value.name} onChange={set('name')} placeholder="Например: Органайзер для кухни" /></Field>

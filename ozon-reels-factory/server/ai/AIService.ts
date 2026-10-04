@@ -10,6 +10,7 @@ import {
 } from '../../shared/engine';
 import type { AdAngle, AIResponse, AIStatus, AITask, GenContext, ProductAnalysis, ProductInput, Scene, SocialPackage, ViralResult } from '../../shared/types';
 import { uid } from '../../shared/util';
+import { extractFromPageText, type ExtractedProduct } from '../../shared/ozonText';
 import type { AIProvider } from './providers';
 import { SYSTEM_BASE, TASK_INSTRUCTIONS } from './prompts';
 
@@ -20,6 +21,7 @@ export interface TaskPayloads {
   viral: { ctx: GenContext; scenes: Scene[] };
   continue: { ctx: GenContext; scenes: Scene[] };
   social: { ctx: GenContext };
+  extract: { text: string; url?: string };
 }
 
 export interface TaskResults {
@@ -29,6 +31,7 @@ export interface TaskResults {
   viral: ViralResult;
   continue: Scene;
   social: SocialPackage;
+  extract: ExtractedProduct;
 }
 
 export const DEMO_MESSAGE = 'AI API не подключен. Используется демонстрационный режим.';
@@ -40,6 +43,7 @@ const demo: { [K in AITask]: (p: TaskPayloads[K]) => TaskResults[K] } = {
   viral: ({ ctx, scenes }) => makeViral(ctx, scenes),
   continue: ({ ctx, scenes }) => continueStory(ctx, scenes),
   social: ({ ctx }) => generateSocial(ctx),
+  extract: ({ text, url }) => extractFromPageText(text, url),
 };
 
 const str = (v: unknown, fallback: string) => (typeof v === 'string' && v.trim() ? v.trim() : fallback);
@@ -175,6 +179,23 @@ export class AIService {
           keywords: strArr(r.keywords, d.keywords),
           variations: d.variations.map((v) => ({ ...v, caption: str(vars.find((x) => x?.id === v.id)?.caption, v.caption) })),
         } as TaskResults[K];
+      }
+      case 'extract': {
+        const { text, url } = payload as TaskPayloads['extract'];
+        // Copied pages are mostly noise; the first ~20k chars contain the title, price, description and specs.
+        const r = await this.ask(task, { url: url ?? '', text: text.slice(0, 20000) });
+        const d = fb as ExtractedProduct;
+        const joined = (v: unknown) => (Array.isArray(v) ? v.map(String).map((x) => x.trim()).filter(Boolean).join('\n') : typeof v === 'string' ? v.trim() : '');
+        const out: ExtractedProduct = {};
+        const put = (k: keyof ExtractedProduct, v: string | undefined) => { if (v) out[k] = v; };
+        put('name', str(r.name, '') || d.name);
+        put('category', str(r.category, ''));
+        put('price', str(r.price, '').replace(/[^\d.,]/g, '') || d.price);
+        put('specs', joined(r.specs) || d.specs);
+        put('benefits', joined(r.benefits));
+        put('audience', str(r.audience, ''));
+        put('appearance', str(r.appearance, ''));
+        return out as TaskResults[K];
       }
     }
     throw new Error(`Unknown task ${task}`);

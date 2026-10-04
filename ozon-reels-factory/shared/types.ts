@@ -152,7 +152,7 @@ export interface GenContext {
   settings: GeneratorSettings;
 }
 
-export type AITask = 'analyze' | 'angles' | 'script' | 'viral' | 'continue' | 'social';
+export type AITask = 'analyze' | 'angles' | 'script' | 'viral' | 'continue' | 'social' | 'extract';
 
 export interface AIResponse<T> {
   data: T;
