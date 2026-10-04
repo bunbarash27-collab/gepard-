@@ -108,3 +108,23 @@ describe('compliance', () => {
     expect(detectRisks('Улучшает комфорт и облегчает уход', 'test')).toEqual([]);
   });
 });
+
+describe('gemini provider', () => {
+  it('falls back to the next model when the primary is overloaded', async () => {
+    const { geminiProvider } = await import('../server/ai/providers');
+    const calls: string[] = [];
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (url: string) => {
+      calls.push(String(url).match(/models\/([^:]+)/)![1]);
+      if (calls.at(-1) === 'primary') return new Response('{"error":{"message":"high demand"}}', { status: 503 });
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }] }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const out = await geminiProvider('k', ['primary', 'backup']).completeJSON('s', 'u');
+      expect(out).toBe('{"ok":true}');
+      expect(calls).toEqual(['primary', 'primary', 'backup']);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  }, 10_000);
+});

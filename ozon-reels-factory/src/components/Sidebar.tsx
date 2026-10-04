@@ -44,7 +44,7 @@ OPENAI_API_KEY=sk-...        # или
 GEMINI_API_KEY=...
 AI_PROVIDER=openai           # openai | gemini (необязательно)
 OPENAI_MODEL=gpt-4o-mini
-GEMINI_MODEL=gemini-2.5-flash`}</pre>
+GEMINI_MODEL=gemini-3.8-flash`}</pre>
           <p className="muted">После изменения .env перезапустите сервер.</p>
         </Modal>
       )}
