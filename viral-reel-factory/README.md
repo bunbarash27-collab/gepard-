@@ -1,6 +1,8 @@
 # VIRAL REEL FACTORY
 
-**Turn an idea into a cinematic short video.**
+**Преврати идею в сильный короткий ролик.** — *Turn an idea into a cinematic short video.*
+
+The app opens in Russian; an RU | EN switch in the header changes the interface and all generated narrative. Image/video prompts have their own EN | RU switch (English by default).
 
 Phase 1 MVP: idea → analysis → 5 hooks → story → scene breakdown → image prompts → video prompts → 🔥 Make It Stronger. The output is a ready structure for AI image/video generators (9:16).
 
@@ -18,7 +20,7 @@ The first visit opens the **Demo Project** («Девушка садится в �
 
 ## AI modes
 
-Without API keys the app runs in **Demo Mode**. Every step is produced by the built-in offline story engine (`shared/engine.ts`). It is deterministic and rule-based: it parses the idea against a knowledge base of characters, locations, "other worlds" and visual styles (`shared/lexicon.ts`), then composes the reel from dramaturgy templates. It covers common reality-break ideas well. It does not understand arbitrary text the way an LLM does, and the UI labels the mode.
+Without API keys the app runs in **Demo Mode** (ДЕМО-РЕЖИМ). Every step is produced by the built-in offline story engine (`shared/engine.ts`). It is deterministic and rule-based: it parses the idea against a knowledge base of characters, locations, "other worlds" and visual styles (`shared/lexicon.ts`), then composes the reel from dramaturgy templates. It covers common reality-break ideas well. It does not understand arbitrary text the way an LLM does, and the UI labels the mode.
 
 To use a real model, copy `.env.example` to `.env`:
 
@@ -34,11 +36,14 @@ If the provider fails, the offline engine's result is shown with a warning.
 
 ```
 shared/            used by both server and browser
-  types.ts         Reel, IdeaAnalysis, Hook, Story, Scene, ContinuityState, StrongerResult
+  types.ts         Reel, IdeaAnalysis, Hook, Story, Scene (+ PromptLayer), ContinuityState, Lang
+  i18n.ts          UI dictionary (ru/en), beat labels, server messages, language defaults
   parser.ts        idea → character / location / twist world / trigger / conflict signals
-  lexicon.ts       offline knowledge base + style presets (camera, lens, grade, photorealism)
-  engine.ts        offline engine: analyze, hooks, story, scenes + continuity, Make It Stronger
-  prompts.ts       IMAGE / VIDEO prompt compilers (inject CONTINUITY_STATE into every prompt)
+  lexicon.ts       offline knowledge base (English) + style presets
+  lexicon.ru.ts    the same knowledge base in Russian, keyed by the same preset keys
+  narrative/       language packs: en.ts, ru.ts implement one `Texts` contract (types.ts)
+  engine.ts        offline engine logic: scoring, structure, timing, continuity, Make It Stronger
+  prompts.ts       IMAGE / VIDEO prompt compilers per language (inject CONTINUITY_STATE)
   demo.ts          demo project
   export.ts        COPY ALL text
 server/
@@ -51,8 +56,23 @@ src/               React SPA: one screen, workflow IDEA → HOOK → STORY → S
 
 - **CONTINUITY_STATE** (character, location, objects, wardrobe, lighting, time, weather, camera style, visual style, color palette) is created with the scenes. Each scene inherits the previous scene's state and changes only what the story changes. With a model, character, wardrobe and camera/visual style stay locked. The state is stored internally (`scene.continuity`) and is not shown in the UI.
 - **Prompts** are compiled from structured scene specs + continuity. Every image prompt covers subject, character, clothing, environment, composition, camera angle, lens, lighting, depth of field, materials, textures, atmosphere, palette, visual style and photorealism. Every video prompt covers subject, facial, camera, object and environment movement, physical interaction, timing, transition and ending frame. Filler phrases ("make it viral", "beautiful cinematic scene"…) are stripped.
-- **Make It Stronger** re-analyzes the current version for 7 areas: first 1–2 s, curiosity gap, pacing, conflict, emotional escalation, visual surprise and payoff. It shows BEFORE / AFTER / WHY IT IS STRONGER and keeps the total duration. Areas that were already improved are not touched again.
-- The current reel is kept in `localStorage`.
+- **Make It Stronger** (🔥 УСИЛИТЬ РОЛИК) re-analyzes the current version for 7 areas: first 1–2 s, curiosity gap, pacing, conflict, emotional escalation, visual surprise and payoff. It shows BEFORE / AFTER / WHY IT IS STRONGER and keeps the total duration. Areas that were already improved are not touched again.
+- The current reel, the interface language and the prompt language are kept in `localStorage`.
+
+### Languages
+
+Two independent settings travel with every request as part of `settings`:
+
+| Setting | Values | Default | Controls |
+| --- | --- | --- | --- |
+| `language` | `ru` / `en` | `ru` | UI and all narrative: analysis, hooks, story, emotional arc, scenes, voiceover, on-screen text, recommendations, Make It Stronger |
+| `promptLanguage` | `en` / `ru` | `en` | language of IMAGE / VIDEO prompts (English is what generators understand best) |
+
+- **Offline engine.** `engine.ts` holds only logic; every phrase comes from a language pack (`narrative/en.ts`, `narrative/ru.ts`). Russian templates are written for natural speech (present tense, gendered pronouns per character), not translated word by word. Each scene carries two prompt layers built from the same plan: English at the top level (`imagePrompt`, `videoPrompt`, `continuity`) and Russian in `scene.ru`. Switching the prompt language never changes the story.
+- **Switching the UI language** re-renders an offline reel locally (the engine is deterministic: same idea, hook and applied boosts → same reel in the other language). A reel written by a real model cannot be re-rendered that way; the UI offers to regenerate it instead.
+- **Real model.** `AIService` passes the language contract in the system prompt: narrative in `language`, generator-facing fields always in English. When `promptLanguage = ru`, it asks the model to translate the prompt layer (task `prompts`); without a model, AI-written prompts cannot be translated and the UI says so.
+- **Improved idea** rewrites the user's own text, so it keeps the language the idea was written in.
+- Server messages (validation, Demo Mode, provider errors) follow the request's `language`.
 
 ## Checks
 
