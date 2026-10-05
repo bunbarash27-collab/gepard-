@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { copyText } from '../lib/clipboard';
+import { useT } from '../lib/i18n';
 
 type ToastKind = 'ok' | 'info' | 'warn' | 'error';
 interface Toast { id: number; kind: ToastKind; text: string }
@@ -38,6 +39,7 @@ export function Button({ variant = 'soft', size = 'md', loading, className = '',
 
 export function CopyButton({ text, label, size = 'sm', variant = 'ghost' }: { text: string; label: string; size?: BtnProps['size']; variant?: BtnProps['variant'] }) {
   const toast = useToast();
+  const { t } = useT();
   const [done, setDone] = useState(false);
   return (
     <Button
@@ -46,21 +48,21 @@ export function CopyButton({ text, label, size = 'sm', variant = 'ghost' }: { te
       aria-label={label}
       onClick={async () => {
         const ok = await copyText(text);
-        toast(ok ? 'Copied to clipboard' : 'Could not copy', ok ? 'ok' : 'error');
+        toast(ok ? t.copied : t.copyFailed, ok ? 'ok' : 'error');
         if (ok) {
           setDone(true);
           setTimeout(() => setDone(false), 1500);
         }
       }}
     >
-      {done ? '✓ Copied' : `⧉ ${label}`}
+      {done ? t.copiedShort : `⧉ ${label}`}
     </Button>
   );
 }
 
-export function Chips<T extends string | number>({ options, value, onChange, label, disabled }: { options: { id: T; label: string }[]; value: T; onChange: (v: T) => void; label: string; disabled?: boolean }) {
+export function Chips<T extends string | number>({ options, value, onChange, label, disabled, small }: { options: { id: T; label: string }[]; value: T; onChange: (v: T) => void; label: string; disabled?: boolean; small?: boolean }) {
   return (
-    <div className="chips" role="radiogroup" aria-label={label}>
+    <div className={`chips ${small ? 'chips-sm' : ''}`} role="radiogroup" aria-label={label}>
       {options.map((o) => (
         <button key={String(o.id)} type="button" role="radio" aria-checked={o.id === value} disabled={disabled} className={`chip ${o.id === value ? 'chip-on' : ''}`} onClick={() => onChange(o.id)}>
           {o.label}
@@ -87,6 +89,7 @@ export function Section({ id, step, title, aside, children }: { id: string; step
 }
 
 export function Modal({ title, onClose, children, footer }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode }) {
+  const { t } = useT();
   useEffect(() => {
     const on = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', on);
@@ -101,7 +104,7 @@ export function Modal({ title, onClose, children, footer }: { title: string; onC
       <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-head">
           <h3>{title}</h3>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">✕</button>
+          <button className="icon-btn" onClick={onClose} aria-label={t.close}>✕</button>
         </div>
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-foot">{footer}</div>}

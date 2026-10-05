@@ -1,4 +1,6 @@
-import { analyzeIdea, BOOST_LABELS, generateHooks, generateScenes, generateStory, makeStronger, type StrongerInput } from '../../shared/engine';
+import { analyzeIdea, BOOST_AREAS, boostLabels, generateHooks, generateScenes, generateStory, makeStronger, type StrongerInput } from '../../shared/engine';
+import { DEFAULT_LANGUAGE, DEFAULT_PROMPT_LANGUAGE, isLang, MESSAGES } from '../../shared/i18n';
+import { texts } from '../../shared/narrative';
 import { evolve } from '../../shared/prompts';
 import type {
   AIResponse,
@@ -10,6 +12,7 @@ import type {
   Hook,
   HookType,
   IdeaAnalysis,
+  Lang,
   ReelSettings,
   Scene,
   SceneBundle,
@@ -19,7 +22,7 @@ import type {
 } from '../../shared/types';
 import { stripVague, uid } from '../../shared/util';
 import type { AIProvider } from './providers';
-import { SYSTEM_BASE, TASK_INSTRUCTIONS } from './prompts';
+import { PROMPT_TRANSLATOR, systemPrompt, TASK_INSTRUCTIONS } from './prompts';
 
 interface Base { idea: string; settings: ReelSettings }
 export interface TaskPayloads {
@@ -28,6 +31,7 @@ export interface TaskPayloads {
   story: Base & { analysis: IdeaAnalysis; hook: Hook };
   scenes: Base & { analysis: IdeaAnalysis; hook: Hook; story: Story };
   stronger: StrongerInput;
+  prompts: Base & { scenes: Scene[] };
 }
 export interface TaskResults {
   analyze: IdeaAnalysis;
@@ -35,8 +39,10 @@ export interface TaskResults {
   story: Story;
   scenes: SceneBundle;
   stronger: StrongerResult;
+  prompts: Scene[];
 }
 
+/** Server-log status line; the UI localizes the mode itself. */
 export const DEMO_MESSAGE = 'Demo Mode: no AI API connected. Results come from the built-in offline story engine.';
 
 const demo: { [K in AITask]: (p: TaskPayloads[K]) => TaskResults[K] } = {
@@ -45,11 +51,13 @@ const demo: { [K in AITask]: (p: TaskPayloads[K]) => TaskResults[K] } = {
   story: ({ idea, settings, hook }) => generateStory(idea, settings, hook),
   scenes: ({ idea, settings, hook, story }) => generateScenes(idea, settings, hook, story),
   stronger: (p) => makeStronger(p),
+  // Offline scenes already carry the Russian layer; AI-written scenes cannot be translated without a model.
+  prompts: ({ scenes }) => scenes,
 };
 
 const BEATS: BeatName[] = ['COLD OPEN', 'HOOK', 'SETUP', 'ESCALATION', 'TURN', 'PAYOFF'];
 const HOOK_TYPES: HookType[] = ['curiosity', 'shock', 'emotional', 'visual', 'story'];
-const AREAS = Object.keys(BOOST_LABELS) as BoostArea[];
+const AREAS = BOOST_AREAS;
 const LOCKED: (keyof ContinuityState)[] = ['character', 'wardrobe', 'cameraStyle', 'visualStyle'];
 
 const str = (v: unknown, fallback: string) => (typeof v === 'string' && v.trim() ? stripVague(v.trim()) || fallback : fallback);
@@ -61,6 +69,12 @@ function obj<T extends object>(raw: any, fallback: T): T {
   const out = { ...fallback } as any;
   for (const k of Object.keys(fallback)) out[k] = str(raw?.[k], (fallback as any)[k]);
   return out;
+}
+
+/** Image spec with the optional per-shot lighting the offline fallback does not carry. */
+function imageSpec(raw: any, fallback: Scene['image']): Scene['image'] {
+  const out = obj(raw, fallback);
+  return typeof raw?.lighting === 'string' && raw.lighting.trim() ? { ...out, lighting: stripVague(raw.lighting.trim()) } : out;
 }
 
 /** Models rarely hit exact totals: rescale to [0, total] and keep integer-ish boundaries. */
@@ -81,7 +95,8 @@ function normalizeContinuity(raw: any, fallback: ContinuityState): ContinuitySta
 }
 
 /** Each scene inherits the previous scene's state; character, wardrobe and camera/visual style stay locked. */
-function normalizeScenes(raw: unknown, fallback: Scene[], base: ContinuityState, total: number): Scene[] {
+function normalizeScenes(raw: unknown, fallback: Scene[], base: ContinuityState, total: number, lang: Lang): Scene[] {
+  const none = texts(lang).none;
   if (!Array.isArray(raw) || !raw.length) throw new Error('Model returned no scenes');
   let cont = base;
   const scenes = raw.map((r: any, i: number): Scene => {
@@ -105,9 +120,9 @@ function normalizeScenes(raw: unknown, fallback: Scene[], base: ContinuityState,
       camera: str(r?.camera, fb.camera),
       lighting: str(r?.lighting, fb.lighting),
       sound: str(r?.sound, fb.sound),
-      onScreenText: str(r?.onScreenText, '— (none)'),
-      voiceover: str(r?.voiceover, '— (no voiceover)'),
-      image: obj(r?.image, fb.image),
+      onScreenText: str(r?.onScreenText, none.text),
+      voiceover: str(r?.voiceover, none.vo),
+      image: imageSpec(r?.image, fb.image),
       video: obj(r?.video, fb.video),
       continuity: cont,
       imagePrompt: '',
@@ -126,25 +141,57 @@ export class AIService {
   }
 
   async run<K extends AITask>(task: K, payload: TaskPayloads[K]): Promise<AIResponse<TaskResults[K]>> {
-    validate(task, payload);
-    if (!this.provider) return { data: demo[task](payload), mode: 'demo', notice: DEMO_MESSAGE };
+    const lang = validate(task, payload);
+    const msg = MESSAGES[lang];
+    if (!this.provider) {
+      const data = demo[task](payload);
+      const missingRu = task === 'prompts' && (data as Scene[]).some((s) => !s.ru);
+      return { data, mode: 'demo', notice: missingRu ? msg.ruUnavailable : msg.demo };
+    }
     try {
-      return { data: await this.runModel(task, payload), mode: this.provider.id };
+      let data = await this.runModel(task, payload);
+      let notice: string | undefined;
+      // Prompt language is separate from narrative: build the Russian prompt layer when it is requested.
+      const wantsRu = task === 'prompts' || ((task === 'scenes' || task === 'stronger') && payload.settings.promptLanguage === 'ru');
+      if (wantsRu) {
+        try {
+          if (task === 'prompts') data = (await this.localize(data as Scene[])) as TaskResults[K];
+          else if (task === 'scenes') data = { ...(data as SceneBundle), scenes: await this.localize((data as SceneBundle).scenes) } as TaskResults[K];
+          else data = { ...(data as StrongerResult), scenes: await this.localize((data as StrongerResult).scenes) } as TaskResults[K];
+        } catch (err) {
+          console.error('[AIService] prompt localization failed:', err);
+          notice = msg.ruUnavailable;
+        }
+      }
+      return { data, mode: this.provider.id, notice };
     } catch (err) {
       console.error(`[AIService] ${task} failed:`, err);
-      return { data: demo[task](payload), mode: 'demo', notice: `The AI provider failed (${(err as Error).message.slice(0, 120)}). Showing the offline engine result instead.` };
+      return { data: demo[task](payload), mode: 'demo', notice: msg.providerFailed((err as Error).message.slice(0, 120)) };
     }
   }
 
-  private async ask(task: AITask, input: unknown): Promise<any> {
+  private async localize(scenes: Scene[]): Promise<Scene[]> {
+    if (scenes.every((s) => s.ru)) return scenes;
+    const input = { scenes: scenes.map((s) => ({ image: s.image, video: s.video, continuity: s.continuity })) };
+    const raw = await this.provider!.completeJSON(PROMPT_TRANSLATOR, `${TASK_INSTRUCTIONS.prompts}\n\nINPUT:\n${JSON.stringify(input, null, 2)}`);
+    const r = JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, ''));
+    if (!Array.isArray(r.scenes) || r.scenes.length !== scenes.length) throw new Error('Model returned a different number of scenes');
+    return scenes.map((s, i) => ({
+      ...s,
+      ru: { image: imageSpec(r.scenes[i]?.image, s.image), video: obj(r.scenes[i]?.video, s.video), continuity: normalizeContinuity(r.scenes[i]?.continuity, s.continuity), imagePrompt: '', videoPrompt: '' },
+    }));
+  }
+
+  private async ask(task: AITask, input: { settings: ReelSettings } & Record<string, unknown>): Promise<any> {
     const user = `${TASK_INSTRUCTIONS[task]}\n\nINPUT:\n${JSON.stringify(input, null, 2)}`;
-    const raw = await this.provider!.completeJSON(SYSTEM_BASE, user);
+    const raw = await this.provider!.completeJSON(systemPrompt(input.settings.language), user);
     return JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, ''));
   }
 
   private async runModel<K extends AITask>(task: K, payload: TaskPayloads[K]): Promise<TaskResults[K]> {
     const fb = demo[task](payload) as any;
     const { idea, settings } = payload;
+    const lang = settings.language;
     switch (task) {
       case 'analyze': {
         const r = await this.ask(task, { idea, settings });
@@ -184,30 +231,42 @@ export class AIService {
         const r = await this.ask(task, { idea, settings, analysis, hook, story });
         const d = fb as SceneBundle;
         const continuity = normalizeContinuity(r.continuity, d.continuity);
-        return { continuity, scenes: normalizeScenes(r.scenes, d.scenes, continuity, settings.duration) } as TaskResults[K];
+        return { continuity, scenes: normalizeScenes(r.scenes, d.scenes, continuity, settings.duration, lang) } as TaskResults[K];
       }
       case 'stronger': {
         const p = payload as TaskPayloads['stronger'];
         const r = await this.ask(task, { idea, settings, hook: p.hook, story: p.story, scenes: p.scenes.map(({ imagePrompt, videoPrompt, continuity, ...s }) => s), 'areas already improved': p.boosts, continuity: p.scenes[0]?.continuity });
         const total = p.scenes.reduce((a, s) => Math.max(a, s.end), 0);
-        const scenes = normalizeScenes(r.scenes, p.scenes, p.scenes[0].continuity, total);
+        const scenes = normalizeScenes(r.scenes, p.scenes, p.scenes[0].continuity, total, lang);
         const improvements = (Array.isArray(r.improvements) ? r.improvements : [])
           .map((x: any) => ({ area: oneOf(x?.area, AREAS, 'pacing'), before: str(x?.before, '—'), after: str(x?.after, '—'), why: str(x?.why, '') }))
-          .map((x: any) => ({ ...x, label: BOOST_LABELS[x.area as BoostArea] }));
+          .map((x: any) => ({ ...x, label: boostLabels(lang)[x.area as BoostArea] }));
         const story: Story = { ...p.story, summary: str(r.summary, p.story.summary), pacing: str(r.pacing, p.story.pacing), beats: scenes.map((s, i) => ({ ...(p.story.beats[i] ?? p.story.beats[p.story.beats.length - 1]), beat: s.beat, start: s.start, end: s.end, description: s.action })) };
-        return { hook: { ...p.hook, onScreenText: str(r.hookOnScreenText, p.hook.onScreenText) }, story, scenes, improvements, message: improvements.length ? undefined : 'The model found nothing to improve.' } as TaskResults[K];
+        return { hook: { ...p.hook, onScreenText: str(r.hookOnScreenText, p.hook.onScreenText) }, story, scenes, improvements, message: improvements.length ? undefined : texts(lang).stronger.message } as TaskResults[K];
       }
+      case 'prompts':
+        // Translation itself happens in run(); here the scenes pass through unchanged.
+        return (payload as TaskPayloads['prompts']).scenes as TaskResults[K];
     }
     throw new Error(`Unknown task ${task}`);
   }
 }
 
-function validate(task: AITask, p: any) {
-  if (typeof p?.idea !== 'string' || !p.idea.trim()) throw new Error('Idea is required');
-  if (p.idea.length > 2000) throw new Error('Idea is too long (max 2000 characters)');
-  if (![10, 15, 30, 60].includes(p?.settings?.duration) || !['cinematic', 'ugc', 'commercial', 'comedy', 'realistic'].includes(p?.settings?.style)) throw new Error('Invalid settings');
-  if (task !== 'analyze' && task !== 'hooks' && !p.hook) throw new Error('A selected hook is required');
-  if ((task === 'scenes' || task === 'stronger') && !Array.isArray(p.story?.beats)) throw new Error('A story is required');
-  if (task === 'stronger' && (!Array.isArray(p.scenes) || !p.scenes.length)) throw new Error('Scenes are required');
+/** Validates the payload, fills language defaults (ru / en) and returns the language for messages. */
+function validate(task: AITask, p: any): Lang {
+  const settings = p?.settings;
+  const lang: Lang = isLang(settings?.language) ? settings.language : DEFAULT_LANGUAGE;
+  const msg = MESSAGES[lang];
+  if (typeof p?.idea !== 'string' || !p.idea.trim()) throw new Error(msg.ideaRequired);
+  if (p.idea.length > 2000) throw new Error(msg.ideaTooLong);
+  if (p.idea.trim().split(/\s+/).length < 2) throw new Error(msg.notEnough);
+  if (![10, 15, 30, 60].includes(settings?.duration) || !['cinematic', 'ugc', 'commercial', 'comedy', 'realistic'].includes(settings?.style)) throw new Error(msg.invalidSettings);
+  settings.language = lang;
+  settings.promptLanguage = isLang(settings.promptLanguage) ? settings.promptLanguage : DEFAULT_PROMPT_LANGUAGE;
+  settings.format = '9:16';
+  if (task !== 'analyze' && task !== 'hooks' && task !== 'prompts' && !p.hook) throw new Error(msg.hookRequired);
+  if ((task === 'scenes' || task === 'stronger') && !Array.isArray(p.story?.beats)) throw new Error(msg.storyRequired);
+  if ((task === 'stronger' || task === 'prompts') && (!Array.isArray(p.scenes) || !p.scenes.length)) throw new Error(msg.scenesRequired);
   if (task === 'stronger' && !Array.isArray(p.boosts)) p.boosts = [];
+  return lang;
 }

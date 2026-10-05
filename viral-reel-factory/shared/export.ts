@@ -1,42 +1,50 @@
-import type { Reel } from './types';
-import { pad2, timeRange } from './util';
+import { BEAT_LABELS, UI } from './i18n';
+import { promptsFor } from './prompts';
+import type { Lang, Reel } from './types';
+import { pad2 } from './util';
 
-export function reelToText(reel: Reel): string {
+/** COPY ALL text: headings and narrative in the UI language, prompts in the chosen prompt language. */
+export function reelToText(reel: Reel, promptLanguage: Lang = reel.settings.promptLanguage): string {
+  const lang = reel.settings.language;
+  const t = UI[lang];
+  const e = t.export;
   const hook = reel.hooks?.find((h) => h.id === reel.selectedHookId);
   const lines: string[] = [
     'VIRAL REEL FACTORY',
-    `Idea: ${reel.idea}`,
-    `Format: ${reel.settings.format} · ${reel.settings.duration} sec · ${reel.settings.style}`,
+    `${e.idea}: ${reel.idea}`,
+    `${e.format}: ${reel.settings.format} · ${t.sec(reel.settings.duration)} · ${t.styles[reel.settings.style]}`,
     '',
-    '## REEL CONCEPT',
+    `## ${e.concept}`,
     reel.analysis?.concept ?? '',
     '',
-    '## SELECTED HOOK',
-    hook ? `${hook.hook}\nWhy it works: ${hook.whyItWorks}` : '',
+    `## ${e.hook}`,
+    hook ? `${hook.hook}\n${e.why}: ${hook.whyItWorks}` : '',
     '',
-    '## STORY',
-    reel.story ? `${reel.story.summary}\nEmotional arc: ${reel.story.emotionalArc}\nPacing: ${reel.story.pacing}` : '',
+    `## ${e.story}`,
+    reel.story ? `${reel.story.summary}\n${e.arc}: ${reel.story.emotionalArc}\n${e.pacing}: ${reel.story.pacing}` : '',
     '',
-    '## SCENES',
+    `## ${e.scenes}`,
   ];
+  const f = t.sceneFields;
   reel.scenes?.forEach((s, i) => {
+    const p = promptsFor(s, promptLanguage);
     lines.push(
       '',
-      `### SCENE ${pad2(i + 1)} — ${s.beat} (${timeRange(s.start, s.end)})`,
-      `Purpose: ${s.purpose}`,
-      `Visual: ${s.visual}`,
-      `Action: ${s.action}`,
-      `Camera: ${s.camera}`,
-      `Lighting: ${s.lighting}`,
-      `Sound: ${s.sound}`,
-      `On-screen text: ${s.onScreenText}`,
-      `Voiceover: ${s.voiceover}`,
+      `### ${t.sceneN(pad2(i + 1))} — ${BEAT_LABELS[lang][s.beat]} (${t.timeRange(s.start, s.end)})`,
+      `${f.purpose}: ${s.purpose}`,
+      `${f.visual}: ${s.visual}`,
+      `${f.action}: ${s.action}`,
+      `${f.camera}: ${s.camera}`,
+      `${f.lighting}: ${s.lighting}`,
+      `${f.sound}: ${s.sound}`,
+      `${f.onScreenText}: ${s.onScreenText}`,
+      `${e.voiceover}: ${s.voiceover}`,
       '',
-      'IMAGE PROMPT:',
-      s.imagePrompt,
+      `${t.imagePrompt}:`,
+      p.image,
       '',
-      'VIDEO PROMPT:',
-      s.videoPrompt,
+      `${t.videoPrompt}:`,
+      p.video,
     );
   });
   return lines.join('\n');

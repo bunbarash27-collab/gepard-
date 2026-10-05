@@ -32,7 +32,8 @@ export interface ParsedIdea {
   conflictClause?: string;
   emotion: boolean;
   trigger: string;
-  triggerRu: string;
+  /** Index into TRIGGERS, or -1 when the location's own trigger is used. */
+  triggerIdx: number;
 }
 
 export function parseIdea(idea: string): ParsedIdea {
@@ -65,7 +66,7 @@ export function parseIdea(idea: string): ParsedIdea {
     conflictClause,
     emotion: EMOTION_RE.test(text),
     trigger: trigger?.text ?? resolvedLocation.trigger,
-    triggerRu: trigger?.ru ?? '',
+    triggerIdx: trigger ? TRIGGERS.indexOf(trigger) : -1,
   };
 }
 

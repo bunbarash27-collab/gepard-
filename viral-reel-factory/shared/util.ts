@@ -21,6 +21,13 @@ export const VAGUE_PHRASES = [
   'best quality',
   'ultra amazing',
   'trending on artstation',
+  'сделай круто',
+  'сделай вирусным',
+  'вирусное видео',
+  'красивая кинематографичная сцена',
+  'шедевр',
+  'высокое качество',
+  'наилучшее качество',
 ];
 
 export function findVaguePhrases(text: string): string[] {

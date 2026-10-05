@@ -1,11 +1,17 @@
 export type Duration = 10 | 15 | 30 | 60;
 export type ReelFormat = '9:16';
 export type ReelStyle = 'cinematic' | 'ugc' | 'commercial' | 'comedy' | 'realistic';
+/** Narrative/UI language and, separately, prompt language. */
+export type Lang = 'ru' | 'en';
 
 export interface ReelSettings {
   duration: Duration;
   format: ReelFormat;
   style: ReelStyle;
+  /** Language of the UI and of all narrative content (analysis, hooks, story, scenes, voiceover, on-screen text). */
+  language: Lang;
+  /** Language the image/video prompts are shown and copied in. */
+  promptLanguage: Lang;
 }
 
 export type Verdict = 'strong' | 'needs-work' | 'weak';
@@ -87,6 +93,8 @@ export interface ImageSpec {
   materials: string;
   textures: string;
   atmosphere: string;
+  /** Optional per-shot lighting; prompts fall back to CONTINUITY_STATE lighting. */
+  lighting?: string;
 }
 
 export interface VideoSpec {
@@ -101,7 +109,21 @@ export interface VideoSpec {
   endingFrame: string;
 }
 
-export interface Scene {
+/** Machine layer of a scene in one prompt language: specs, continuity and the compiled prompts. */
+export interface PromptLayer {
+  image: ImageSpec;
+  video: VideoSpec;
+  /** Snapshot of CONTINUITY_STATE this scene was generated with. */
+  continuity: ContinuityState;
+  imagePrompt: string;
+  videoPrompt: string;
+}
+
+/**
+ * Narrative fields are in the reel's language. The top-level prompt layer is English (the default and
+ * generator-optimized language); `ru` holds the Russian prompt layer when it is available.
+ */
+export interface Scene extends PromptLayer {
   id: string;
   beat: BeatName;
   start: number;
@@ -114,12 +136,7 @@ export interface Scene {
   sound: string;
   onScreenText: string;
   voiceover: string;
-  image: ImageSpec;
-  video: VideoSpec;
-  /** Snapshot of CONTINUITY_STATE this scene was generated with. */
-  continuity: ContinuityState;
-  imagePrompt: string;
-  videoPrompt: string;
+  ru?: PromptLayer;
 }
 
 export interface SceneBundle {
@@ -160,11 +177,13 @@ export interface Reel {
   boosts: BoostArea[];
   version: number;
   isDemo?: boolean;
+  /** 'offline' reels can be re-rendered in another language locally; 'ai' reels need a new generation. */
+  source: 'offline' | 'ai';
   createdAt: number;
 }
 
 export type AIMode = 'demo' | 'openai' | 'gemini';
-export type AITask = 'analyze' | 'hooks' | 'story' | 'scenes' | 'stronger';
+export type AITask = 'analyze' | 'hooks' | 'story' | 'scenes' | 'stronger' | 'prompts';
 
 export interface AIStatus {
   mode: AIMode;

@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { AIService } from '../server/ai/AIService';
 import type { AIProvider } from '../server/ai/providers';
 import { buildDemoReel, DEMO_IDEA } from '../shared/demo';
-import { analyzeIdea, applyStronger, generateHooks, generateScenes, generateStory, makeStronger } from '../shared/engine';
+import { analyzeIdea, applyStronger, generateHooks, generateScenes, generateStory, makeStronger, rebuildReel } from '../shared/engine';
 import { parseIdea } from '../shared/parser';
 import { withPrompts } from '../shared/prompts';
 import type { Duration, Reel, ReelSettings } from '../shared/types';
 import { findVaguePhrases } from '../shared/util';
 
-const S: ReelSettings = { duration: 15, format: '9:16', style: 'cinematic' };
+// The Phase 1 suite below pins English narrative explicitly; Russian (the app default) is covered further down.
+const S: ReelSettings = { duration: 15, format: '9:16', style: 'cinematic', language: 'en', promptLanguage: 'en' };
 
 function build(idea: string, settings = S, hookType = 'curiosity') {
   const analysis = analyzeIdea(idea, settings);
@@ -174,6 +175,165 @@ describe('AIService', () => {
   });
 
   it('rejects invalid input', async () => {
-    await expect(new AIService(null).run('analyze', { idea: ' ', settings: S })).rejects.toThrow(/Idea is required/);
+    await expect(new AIService(null).run('analyze', { idea: ' ', settings: S })).rejects.toThrow(/Enter an idea/);
+  });
+});
+
+// ───────── Russian (default language) ─────────
+
+const RU: ReelSettings = { ...S, language: 'ru', promptLanguage: 'en' };
+const IDEAS = [
+  DEMO_IDEA,
+  'Парень заходит в лифт, двери закрываются, и внезапно он оказывается в космосе',
+  'Бабушка на кухне открывает кран и попадает под воду к рыбам',
+  'Кот в метро чихает и оказывается в средневековом замке',
+  'Курьер в офисе закрывает ноутбук и попадает в будущее',
+  'кот спит',
+];
+const ALLOWED_LATIN = new Set(['UGC', 'POV']);
+const latin = (s: string) => (s.match(/[A-Za-z]{3,}/g) ?? []).filter((w) => !ALLOWED_LATIN.has(w));
+const narrativeOf = (r: ReturnType<typeof build>) => [
+  // verdict is an enum id, not text; improvedIdea follows the idea's own language.
+  ...Object.entries(r.analysis).filter(([k, v]) => typeof v === 'string' && k !== 'verdict' && k !== 'improvedIdea').map(([, v]) => v),
+  ...r.analysis.strengths,
+  ...r.analysis.weaknesses,
+  ...r.hooks.flatMap((h) => [h.hook, h.whyItWorks, h.openingShot, h.onScreenText]),
+  r.story.title, r.story.summary, r.story.structureNote, r.story.emotionalArc, r.story.pacing, ...r.story.additions,
+  ...r.story.beats.flatMap((b) => [b.description, b.emotion, b.pacing]),
+  ...r.scenes.flatMap((s) => [s.purpose, s.visual, s.action, s.camera, s.lighting, s.sound, s.onScreenText, s.voiceover]),
+] as string[];
+
+describe('Russian narrative', () => {
+  for (const idea of IDEAS) {
+    for (const style of ['cinematic', 'ugc', 'comedy'] as const) {
+      for (const duration of [10, 30, 60] as Duration[]) {
+        it(`is fully Russian: «${idea.slice(0, 24)}…» ${style} ${duration}s`, () => {
+          const settings = { ...RU, style, duration };
+          for (const type of ['curiosity', 'shock', 'story'] as const) {
+            const r = build(idea, settings, type);
+            const texts = narrativeOf(r);
+            for (const t of texts) {
+              expect(latin(t), t).toEqual([]);
+              expect(t, 'unresolved token').not.toMatch(/[{}]|undefined/);
+            }
+            expect(r.scenes[r.scenes.length - 1].end).toBe(duration);
+          }
+        });
+      }
+    }
+  }
+
+  it('voiceover and on-screen text are Russian; the improved idea keeps the idea language', () => {
+    const r = build(DEMO_IDEA, RU, 'emotional');
+    expect(r.scenes[0].voiceover).toMatch(/^Она просто хотела доехать домой/);
+    expect(r.scenes[r.scenes.length - 1].onScreenText).toMatch(/по-настоящему/);
+    expect(analyzeIdea('A courier in the office closes the laptop', RU).improvedIdea).toMatch(/^A courier/);
+    expect(analyzeIdea(DEMO_IDEA, RU).weaknesses.join(' ')).toMatch(/Нет конфликта/);
+  });
+
+  it('keeps the same structure as the English version', () => {
+    const ru = build(DEMO_IDEA, { ...RU, duration: 30 });
+    const en = build(DEMO_IDEA, { ...S, duration: 30 });
+    expect(ru.scenes.map((s) => [s.beat, s.start, s.end])).toEqual(en.scenes.map((s) => [s.beat, s.start, s.end]));
+    expect(ru.analysis.score).toBe(en.analysis.score);
+  });
+});
+
+describe('prompt language', () => {
+  it('prompts stay English by default even when the narrative is Russian', () => {
+    const { scenes, continuity } = build(DEMO_IDEA, RU);
+    for (const s of scenes) {
+      expect(s.imagePrompt).toMatch(/^Vertical 9:16 frame\./);
+      expect(s.imagePrompt + s.videoPrompt).not.toMatch(/[а-яё]/i);
+      expect(s.videoPrompt).toContain(continuity.wardrobe);
+    }
+  });
+
+  it('the Russian prompt layer is complete and keeps CONTINUITY_STATE locked', () => {
+    const { scenes } = build(DEMO_IDEA, RU);
+    const first = scenes[0].ru!.continuity;
+    for (const s of scenes) {
+      const ru = s.ru!;
+      for (const label of ['Персонаж:', 'Одежда:', 'Окружение:', 'Композиция:', 'Ракурс:', 'Объектив:', 'Освещение:', 'Глубина резкости:', 'Материалы:', 'Фактуры:', 'Атмосфера:', 'Визуальный стиль:']) expect(ru.imagePrompt).toContain(label);
+      for (const label of ['Движение персонажа:', 'Движение камеры:', 'Движение объектов:', 'Мимика:', 'Движение окружения:', 'Тайминг:', 'Переход:', 'Физическое взаимодействие:', 'Финальный кадр:']) expect(ru.videoPrompt).toContain(label);
+      expect(ru.continuity.character).toBe(first.character);
+      expect(ru.continuity.wardrobe).toBe(first.wardrobe);
+      expect(ru.imagePrompt).toContain(first.wardrobe);
+      expect(ru.imagePrompt + ru.videoPrompt).not.toMatch(/[{}]|undefined/);
+    }
+    expect(scenes.find((s) => s.beat === 'TURN')!.ru!.continuity.location).toMatch(/мелового периода/);
+    expect(scenes[scenes.length - 1].ru!.continuity.objects.join(' ')).toMatch(/папоротника/);
+  });
+});
+
+describe('MAKE IT STRONGER in Russian', () => {
+  it('writes Russian improvements and edits both prompt layers', () => {
+    const demo = buildDemoReel('ru', 'en');
+    const hook = demo.hooks!.find((h) => h.id === demo.selectedHookId)!;
+    const r = makeStronger({ idea: demo.idea, settings: demo.settings, hook, story: demo.story!, scenes: demo.scenes!, boosts: [] });
+    expect(r.improvements.map((i) => i.label)).toEqual(['Хук', 'Разрыв любопытства', 'Темп', 'Конфликт', 'Эмоциональное усиление', 'Визуальная неожиданность', 'Развязка']);
+    for (const i of r.improvements) expect(latin(i.before + i.after + i.why)).toEqual([]);
+    const last = r.scenes[r.scenes.length - 1];
+    expect(last.video.endingFrame).toMatch(/seamless loop/);
+    expect(last.ru!.video.endingFrame).toMatch(/бесшовного цикла/);
+    expect(r.scenes[0].beat).toBe('COLD OPEN');
+    expect(last.end).toBe(15);
+  });
+
+  it('re-renders an offline reel in the other language with the same boosts', () => {
+    const demo = buildDemoReel('en', 'en');
+    const hook = demo.hooks!.find((h) => h.id === demo.selectedHookId)!;
+    const r = makeStronger({ idea: demo.idea, settings: demo.settings, hook, story: demo.story!, scenes: demo.scenes!, boosts: [] });
+    const v2 = applyStronger(demo, { ...r, scenes: withPrompts(r.scenes, demo.settings) });
+    const ru = rebuildReel(v2, 'ru');
+    expect(ru.settings.language).toBe('ru');
+    expect(ru.version).toBe(2);
+    expect(ru.boosts).toEqual(v2.boosts);
+    expect(ru.scenes!.map((s) => [s.beat, s.start, s.end])).toEqual(v2.scenes!.map((s) => [s.beat, s.start, s.end]));
+    expect(ru.scenes![ru.scenes!.length - 1].action).toMatch(/Финальный бит/);
+    expect(ru.scenes![0].imagePrompt).toBe(v2.scenes![0].imagePrompt);
+    expect(rebuildReel(ru, 'en').scenes!.map((s) => s.action)).toEqual(v2.scenes!.map((s) => s.action));
+  });
+});
+
+describe('AIService languages', () => {
+  it('defaults to Russian and validates in the request language', async () => {
+    const ai = new AIService(null);
+    const { language: _l, promptLanguage: _p, ...noLang } = RU;
+    const r = await ai.run('analyze', { idea: DEMO_IDEA, settings: noLang as ReelSettings });
+    expect(r.data.concept).toMatch(/Ролик о сломе реальности/);
+    expect(r.notice).toBe('AI API не подключён. Сейчас используется демонстрационный режим.');
+    await expect(ai.run('analyze', { idea: '', settings: RU })).rejects.toThrow('Введите идею');
+    await expect(ai.run('analyze', { idea: 'кот', settings: RU })).rejects.toThrow(/Недостаточно данных для анализа/);
+  });
+
+  it('sends the language contract to the model and builds Russian prompts on request', async () => {
+    const systems: string[] = [];
+    const fake: AIProvider = {
+      id: 'openai',
+      model: 'fake',
+      async completeJSON(system, user) {
+        systems.push(system);
+        if (user.includes('TASK: Translate')) {
+          const n = JSON.parse(user.slice(user.indexOf('INPUT:') + 6)).scenes.length;
+          return JSON.stringify({ scenes: Array.from({ length: n }, () => ({ image: { subject: 'девушка в машине' }, video: { cameraMovement: 'медленный наезд' }, continuity: { wardrobe: 'красное пальто' } })) });
+        }
+        return JSON.stringify({ hooks: [] });
+      },
+    };
+    const ai = new AIService(fake);
+    await ai.run('hooks', { idea: DEMO_IDEA, settings: RU, analysis: analyzeIdea(DEMO_IDEA, RU) });
+    expect(systems[0]).toMatch(/Narrative language = Russian/);
+    expect(systems[0]).toMatch(/ALWAYS in English/);
+
+    const b = build(DEMO_IDEA, S);
+    const enOnly = b.scenes.map(({ ru: _ru, ...s }) => s);
+    const res = await ai.run('prompts', { idea: DEMO_IDEA, settings: { ...RU, promptLanguage: 'ru' }, scenes: enOnly });
+    const scenes = withPrompts(res.data, RU);
+    expect(scenes[0].ru!.imagePrompt).toMatch(/^Вертикальный кадр 9:16\. Девушка в машине\./);
+    expect(scenes[0].ru!.imagePrompt).toContain('Одежда: красное пальто.');
+
+    const offline = await new AIService(null).run('prompts', { idea: DEMO_IDEA, settings: RU, scenes: enOnly });
+    expect(offline.notice).toMatch(/нельзя перевести/);
   });
 });

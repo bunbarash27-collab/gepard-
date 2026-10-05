@@ -1,57 +1,79 @@
 import { reelToText } from '../../shared/export';
-import type { Reel, Scene } from '../../shared/types';
-import { pad2, timeRange } from '../../shared/util';
-import { Badge, Button, CopyButton, Section } from './ui';
+import { BEAT_LABELS } from '../../shared/i18n';
+import { promptsFor } from '../../shared/prompts';
+import type { Lang, Reel, Scene } from '../../shared/types';
+import { pad2 } from '../../shared/util';
+import { useT } from '../lib/i18n';
+import { Badge, Button, Chips, CopyButton, Section } from './ui';
 
-function PromptBox({ title, text }: { title: string; text: string }) {
+const PROMPT_LANGS: { id: Lang; label: string }[] = [
+  { id: 'en', label: '🇬🇧 EN' },
+  { id: 'ru', label: '🇷🇺 RU' },
+];
+
+function PromptBox({ title, copyLabel, note, text, lang }: { title: string; copyLabel: string; note: string; text: string; lang: Lang }) {
   return (
-    <div className="prompt">
+    <div className="prompt" data-prompt-lang={lang}>
       <div className="prompt-head">
         <span>{title}</span>
-        <CopyButton text={text} label={`COPY ${title}`} />
+        <CopyButton text={text} label={copyLabel} />
       </div>
-      <pre>{text}</pre>
+      <p className="prompt-note">{note}</p>
+      <pre lang={lang}>{text}</pre>
     </div>
   );
 }
 
-function SceneCard({ s, n }: { s: Scene; n: number }) {
-  const rows: [string, string][] = [['Purpose', s.purpose], ['Visual', s.visual], ['Action', s.action], ['Camera', s.camera], ['Lighting', s.lighting], ['Sound', s.sound], ['On-screen text', s.onScreenText], ['Voiceover', s.voiceover]];
+function SceneCard({ s, n, promptLang }: { s: Scene; n: number; promptLang: Lang }) {
+  const { t, lang } = useT();
+  const f = t.sceneFields;
+  const rows: [string, string][] = [[f.purpose, s.purpose], [f.visual, s.visual], [f.action, s.action], [f.camera, s.camera], [f.lighting, s.lighting], [f.sound, s.sound], [f.onScreenText, s.onScreenText], [f.voiceover, s.voiceover]];
+  const p = promptsFor(s, promptLang);
   return (
     <article className="scene" data-testid="scene">
       <div className="scene-head">
-        <h3>SCENE {pad2(n)}</h3>
-        <Badge tone={s.beat === 'TURN' || s.beat === 'COLD OPEN' ? 'fire' : 'default'}>{s.beat}</Badge>
-        <span className="scene-time">Time: {timeRange(s.start, s.end)}</span>
+        <h3>{t.sceneN(pad2(n))}</h3>
+        <Badge tone={s.beat === 'TURN' || s.beat === 'COLD OPEN' ? 'fire' : 'default'}>{BEAT_LABELS[lang][s.beat]}</Badge>
+        <span className="scene-time">{t.time}: {t.timeRange(s.start, s.end)}</span>
       </div>
       <dl className="scene-grid">
         {rows.map(([k, v]) => <div key={k} className="kv"><dt>{k}</dt><dd>{v}</dd></div>)}
       </dl>
       <div className="prompts">
-        <PromptBox title="IMAGE PROMPT" text={s.imagePrompt} />
-        <PromptBox title="VIDEO PROMPT" text={s.videoPrompt} />
+        <PromptBox title={t.imagePrompt} copyLabel={t.copyImage} note={t.promptNote[p.lang]} text={p.image} lang={p.lang} />
+        <PromptBox title={t.videoPrompt} copyLabel={t.copyVideo} note={t.promptNote[p.lang]} text={p.video} lang={p.lang} />
       </div>
     </article>
   );
 }
 
-export function ScenesView({ reel, onStronger, busy }: { reel: Reel; onStronger: () => void; busy: boolean }) {
+export function ScenesView({ reel, promptLang, onPromptLang, onStronger, busy }: { reel: Reel; promptLang: Lang; onPromptLang: (l: Lang) => void; onStronger: () => void; busy: boolean }) {
+  const { t } = useT();
   const hook = reel.hooks?.find((h) => h.id === reel.selectedHookId);
   const scenes = reel.scenes ?? [];
   return (
     <Section
       id="scenes"
       step="04"
-      title="YOUR REEL"
-      aside={<div className="row wrap">{reel.version > 1 && <Badge tone="fire">v{reel.version} · stronger</Badge>}<CopyButton text={reelToText(reel)} label="COPY ALL" variant="soft" size="md" /><Button variant="fire" onClick={onStronger} loading={busy}>🔥 MAKE IT STRONGER</Button></div>}
+      title={t.reelTitle}
+      aside={
+        <div className="row wrap">
+          {reel.version > 1 && <Badge tone="fire">{t.version(reel.version)}</Badge>}
+          <CopyButton text={reelToText(reel, promptLang)} label={t.copyAll} variant="soft" size="md" />
+          <Button variant="fire" onClick={onStronger} loading={busy}>{t.stronger}</Button>
+        </div>
+      }
     >
       <div className="result-top">
-        <div className="kv"><dt>REEL CONCEPT</dt><dd>{reel.analysis?.concept}</dd></div>
-        {hook && <div className="kv"><dt>SELECTED HOOK</dt><dd>{hook.hook}{hook.onScreenText && <span className="muted"> · On screen: “{hook.onScreenText}”</span>}</dd></div>}
-        {reel.story && <div className="kv"><dt>STORY</dt><dd>{reel.story.summary}</dd></div>}
+        <div className="kv"><dt>{t.reelConcept}</dt><dd>{reel.analysis?.concept}</dd></div>
+        {hook && <div className="kv"><dt>{t.selectedHook}</dt><dd>{hook.hook}{hook.onScreenText && <span className="muted"> · {t.onScreen} «{hook.onScreenText}»</span>}</dd></div>}
+        {reel.story && <div className="kv"><dt>{t.storyTitle}</dt><dd>{reel.story.summary}</dd></div>}
       </div>
-      <h3 className="scenes-title">SCENES <span className="muted small">{scenes.length} scenes · {reel.settings.duration} sec · {reel.settings.format} · {reel.settings.style}</span></h3>
-      <div className="scenes">{scenes.map((s, i) => <SceneCard key={s.id} s={s} n={i + 1} />)}</div>
+      <div className="scenes-bar">
+        <h3 className="scenes-title">{t.scenesTitle} <span className="muted small">{t.scenesMeta(scenes.length, reel.settings.duration, reel.settings.format, t.styles[reel.settings.style])}</span></h3>
+        <div className="setting setting-inline"><span>{t.promptLanguage}</span><Chips small label={t.promptLanguage} options={PROMPT_LANGS} value={promptLang} onChange={onPromptLang} disabled={busy} /></div>
+      </div>
+      <div className="scenes">{scenes.map((s, i) => <SceneCard key={s.id} s={s} n={i + 1} promptLang={promptLang} />)}</div>
     </Section>
   );
 }
