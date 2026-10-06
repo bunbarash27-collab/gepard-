@@ -1,3 +1,5 @@
+import type { SceneCheck, SceneDraft, StoryWorld } from './continuity/types';
+
 export type Duration = 10 | 15 | 30 | 60;
 export type ReelFormat = '9:16';
 export type ReelStyle = 'cinematic' | 'ugc' | 'commercial' | 'comedy' | 'realistic';
@@ -137,11 +139,16 @@ export interface Scene extends PromptLayer {
   onScreenText: string;
   voiceover: string;
   ru?: PromptLayer;
+  /** Planned events and what the scene shows, as drafted (before validation). */
+  draft?: SceneDraft;
+  /** Continuity Engine result: contract, validation, repairs and prompt state lines. */
+  check?: SceneCheck;
 }
 
 export interface SceneBundle {
   continuity: ContinuityState;
   scenes: Scene[];
+  world?: StoryWorld;
 }
 
 export type BoostArea = 'opening' | 'curiosity' | 'pacing' | 'conflict' | 'escalation' | 'surprise' | 'payoff';
@@ -161,6 +168,7 @@ export interface StrongerResult {
   improvements: Improvement[];
   /** Set when nothing could be improved. */
   message?: string;
+  world?: StoryWorld;
 }
 
 export interface Reel {
@@ -173,6 +181,10 @@ export interface Reel {
   story?: Story;
   continuity?: ContinuityState;
   scenes?: Scene[];
+  /** Continuity Engine 2.0: master state, current state, per-scene timeline and event log. */
+  world?: StoryWorld;
+  /** Continue Story choices in order (replayed when an offline reel is re-rendered in another language). */
+  continued?: ContinueChoice[];
   /** Boost areas already applied by MAKE IT STRONGER. */
   boosts: BoostArea[];
   version: number;
@@ -183,7 +195,14 @@ export interface Reel {
 }
 
 export type AIMode = 'demo' | 'openai' | 'gemini';
-export type AITask = 'analyze' | 'hooks' | 'story' | 'scenes' | 'stronger' | 'prompts';
+export type AITask = 'analyze' | 'hooks' | 'story' | 'scenes' | 'stronger' | 'prompts' | 'continueOptions' | 'continue';
+
+export type ContinueKind = 'step-out' | 'returns' | 'witness' | 'artifact' | 'escape' | 'noticed' | 'second' | 'flicker' | 'custom';
+export interface ContinueChoice {
+  kind: ContinueKind;
+  /** Model-proposed option id (AI reels). */
+  optionId?: string;
+}
 
 export interface AIStatus {
   mode: AIMode;
