@@ -107,7 +107,7 @@ export function openAIProvider(apiKey: string, model: string, baseUrl = 'https:/
   };
 }
 
-/** Gemini generateContent (REST) with structured output via generationConfig.responseFormat. */
+/** Gemini generateContent (REST) with structured output via generationConfig.responseFormat (mimeType is an enum, not a MIME string). */
 export function geminiProvider(apiKey: string, model: string, opts: ProviderOptions = {}): AIProvider {
   const postJSON = client(apiKey, opts);
   const gemini3 = /^gemini-3/.test(model);
@@ -119,7 +119,7 @@ export function geminiProvider(apiKey: string, model: string, opts: ProviderOpti
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: 'user', parts: [{ text: user }] }],
         generationConfig: {
-          ...(format ? { responseFormat: { text: { mimeType: 'application/json', schema: format.schema } } } : { responseMimeType: 'application/json' }),
+          ...(format ? { responseFormat: { text: { mimeType: 'APPLICATION_JSON', schema: format.schema } } } : { responseMimeType: 'application/json' }),
           // Gemini 3 models are tuned for the default temperature; low thinking keeps long scene lists within the timeout.
           ...(gemini3 ? { thinkingConfig: { thinkingLevel: 'LOW' } } : { temperature: 0.8 }),
         },

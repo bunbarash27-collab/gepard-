@@ -75,7 +75,7 @@ describe('real provider configuration', () => {
     expect(url).not.toContain(SECRET);
     expect((init.headers as Record<string, string>)['x-goog-api-key']).toBe(SECRET);
     const body = JSON.parse(String(init.body));
-    expect(body.generationConfig.responseFormat).toEqual({ text: { mimeType: 'application/json', schema: { type: 'object' } } });
+    expect(body.generationConfig.responseFormat).toEqual({ text: { mimeType: 'APPLICATION_JSON', schema: { type: 'object' } } });
     expect(body.systemInstruction.parts[0].text).toBe('sys');
   });
 

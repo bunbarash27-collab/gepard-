@@ -27,7 +27,9 @@ const check = (name: string, ok: boolean, info?: string) => {
   console.log(`${ok ? '✓' : '✗'} ${name}${info ? ` — ${info}` : ''}`);
 };
 const real = <T>(r: AIResponse<T>, step: string) => {
-  check(`${step}: answered by ${inner.id}`, r.mode === inner.id, r.mode === inner.id ? undefined : r.notice);
+  // A notice in real mode means part of the step (e.g. prompt localization) fell back.
+  const ok = r.mode === inner.id && !r.notice;
+  check(`${step}: answered by ${inner.id}`, ok, ok ? undefined : r.notice);
   return r.data;
 };
 
@@ -52,7 +54,9 @@ check('image/video prompts in English, non-empty', scenes.every((s) => s.imagePr
 check('CONTINUITY_STATE kept (character, wardrobe)', scenes.every((s) => s.continuity.character === bundle.continuity.character && s.continuity.wardrobe === bundle.continuity.wardrobe));
 
 const ruSettings: ReelSettings = { ...settings, promptLanguage: 'ru' };
-const ru = real(await ai.run('prompts', { idea, settings: ruSettings, scenes: scenes as Scene[] }), 'prompts (ru)');
+// Drop any existing Russian layer so the model really writes the Russian prompts.
+const enOnly = scenes.map(({ ru: _ru, ...s }) => s) as Scene[];
+const ru = real(await ai.run('prompts', { idea, settings: ruSettings, scenes: enOnly }), 'prompts (ru)');
 const ruScenes = withPrompts(ru, ruSettings);
 check('promptLanguage = ru → Russian prompts', ruScenes.every((s) => s.ru && CYR.test(s.ru.imagePrompt) && CYR.test(s.ru.videoPrompt)));
 
