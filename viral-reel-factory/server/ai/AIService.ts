@@ -20,9 +20,10 @@ import type {
   StoryBeat,
   StrongerResult,
 } from '../../shared/types';
-import { stripVague, uid } from '../../shared/util';
+import { fitTimeline, isExactTimeline, stripVague, uid } from '../../shared/util';
 import type { AIProvider } from './providers';
 import { PROMPT_TRANSLATOR, systemPrompt, TASK_INSTRUCTIONS } from './prompts';
+import { TASK_SCHEMAS, toWire, validateSchema } from './schemas';
 
 interface Base { idea: string; settings: ReelSettings }
 export interface TaskPayloads {
@@ -77,17 +78,41 @@ function imageSpec(raw: any, fallback: Scene['image']): Scene['image'] {
   return typeof raw?.lighting === 'string' && raw.lighting.trim() ? { ...out, lighting: stripVague(raw.lighting.trim()) } : out;
 }
 
-/** Models rarely hit exact totals: rescale to [0, total] and keep integer-ish boundaries. */
-function retimeTo<T extends { start: number; end: number }>(items: T[], total: number): T[] {
-  const durs = items.map((x) => Math.max(0.5, num(x.end, 0) - num(x.start, 0)));
-  const sum = durs.reduce((a, b) => a + b, 0);
-  let t = 0;
-  return items.map((x, i) => {
-    const d = i === items.length - 1 ? total - t : Math.round(((durs[i] * total) / sum) * 2) / 2;
-    const out = { ...x, start: t, end: Math.round((t + d) * 10) / 10 };
-    t = out.end;
-    return out;
-  });
+/** Model output that is not valid JSON or does not match the task schema. */
+export class MalformedOutputError extends Error {
+  name = 'MalformedOutputError';
+}
+
+/** Attempts per task when the model returns malformed or schema-violating output. */
+const OUTPUT_ATTEMPTS = 2;
+const HOOK_SET: string[] = ['curiosity', 'shock', 'emotional', 'visual', 'story'];
+
+function parseModelJSON(raw: string): any {
+  try {
+    return JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, ''));
+  } catch (err) {
+    throw new MalformedOutputError(`Invalid JSON from model: ${(err as Error).message.slice(0, 120)}`);
+  }
+}
+
+/** Final guard on every result: sum(scene durations) === selected duration, before anything is shown. */
+function enforceDuration<K extends AITask>(task: K, data: TaskResults[K], total: number): TaskResults[K] {
+  if (task === 'story') {
+    const s = data as Story;
+    return (isExactTimeline(s.beats, total) ? s : { ...s, beats: fitTimeline(s.beats, total) }) as TaskResults[K];
+  }
+  if (task === 'scenes') {
+    const b = data as SceneBundle;
+    return (isExactTimeline(b.scenes, total) ? b : { ...b, scenes: fitTimeline(b.scenes, total) }) as TaskResults[K];
+  }
+  if (task === 'stronger') {
+    const r = data as StrongerResult;
+    if (isExactTimeline(r.scenes, total) && isExactTimeline(r.story.beats, total)) return data;
+    const scenes = fitTimeline(r.scenes, total);
+    const beats = scenes.map((s, i) => ({ ...(r.story.beats[i] ?? r.story.beats[r.story.beats.length - 1]), start: s.start, end: s.end }));
+    return { ...r, scenes, story: { ...r.story, beats } } as TaskResults[K];
+  }
+  return data;
 }
 
 function normalizeContinuity(raw: any, fallback: ContinuityState): ContinuityState {
@@ -129,7 +154,7 @@ function normalizeScenes(raw: unknown, fallback: Scene[], base: ContinuityState,
       videoPrompt: '',
     };
   });
-  return retimeTo(scenes, total);
+  return fitTimeline(scenes, total);
 }
 
 export class AIService {
@@ -144,12 +169,12 @@ export class AIService {
     const lang = validate(task, payload);
     const msg = MESSAGES[lang];
     if (!this.provider) {
-      const data = demo[task](payload);
+      const data = enforceDuration(task, demo[task](payload), payload.settings.duration);
       const missingRu = task === 'prompts' && (data as Scene[]).some((s) => !s.ru);
       return { data, mode: 'demo', notice: missingRu ? msg.ruUnavailable : msg.demo };
     }
     try {
-      let data = await this.runModel(task, payload);
+      let data = enforceDuration(task, await this.runModel(task, payload), payload.settings.duration);
       let notice: string | undefined;
       // Prompt language is separate from narrative: build the Russian prompt layer when it is requested.
       const wantsRu = task === 'prompts' || ((task === 'scenes' || task === 'stronger') && payload.settings.promptLanguage === 'ru');
@@ -166,16 +191,16 @@ export class AIService {
       return { data, mode: this.provider.id, notice };
     } catch (err) {
       console.error(`[AIService] ${task} failed:`, err);
-      return { data: demo[task](payload), mode: 'demo', notice: msg.providerFailed((err as Error).message.slice(0, 120)) };
+      return { data: enforceDuration(task, demo[task](payload), payload.settings.duration), mode: 'demo', notice: msg.providerFailed((err as Error).message.slice(0, 120)) };
     }
   }
 
   private async localize(scenes: Scene[]): Promise<Scene[]> {
     if (scenes.every((s) => s.ru)) return scenes;
     const input = { scenes: scenes.map((s) => ({ image: s.image, video: s.video, continuity: s.continuity })) };
-    const raw = await this.provider!.completeJSON(PROMPT_TRANSLATOR, `${TASK_INSTRUCTIONS.prompts}\n\nINPUT:\n${JSON.stringify(input, null, 2)}`);
-    const r = JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, ''));
-    if (!Array.isArray(r.scenes) || r.scenes.length !== scenes.length) throw new Error('Model returned a different number of scenes');
+    const r = await this.askJSON('prompts', PROMPT_TRANSLATOR, `${TASK_INSTRUCTIONS.prompts}\n\nINPUT:\n${JSON.stringify(input, null, 2)}`, (d) =>
+      d.scenes.length === scenes.length ? [] : [`expected ${scenes.length} scenes, got ${d.scenes.length}`],
+    );
     return scenes.map((s, i) => ({
       ...s,
       ru: { image: imageSpec(r.scenes[i]?.image, s.image), video: obj(r.scenes[i]?.video, s.video), continuity: normalizeContinuity(r.scenes[i]?.continuity, s.continuity), imagePrompt: '', videoPrompt: '' },
@@ -184,8 +209,29 @@ export class AIService {
 
   private async ask(task: AITask, input: { settings: ReelSettings } & Record<string, unknown>): Promise<any> {
     const user = `${TASK_INSTRUCTIONS[task]}\n\nINPUT:\n${JSON.stringify(input, null, 2)}`;
-    const raw = await this.provider!.completeJSON(systemPrompt(input.settings.language), user);
-    return JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, ''));
+    const check = task === 'hooks' ? (d: any) => (HOOK_SET.every((t) => d.hooks.some((h: any) => String(h.type).toLowerCase() === t)) ? [] : ['hooks must contain each type exactly once']) : undefined;
+    return this.askJSON(task, systemPrompt(input.settings.language), user, check);
+  }
+
+  /** Structured-output request: schema-constrained, validated, retried once on malformed output. */
+  private async askJSON(task: AITask, system: string, user: string, check?: (data: any) => string[]): Promise<any> {
+    const schema = TASK_SCHEMAS[task];
+    let last: Error = new MalformedOutputError('No output');
+    for (let attempt = 1; attempt <= OUTPUT_ATTEMPTS; attempt++) {
+      const raw = await this.provider!.completeJSON(system, user, { name: task, schema: toWire(schema) });
+      try {
+        const data = parseModelJSON(raw);
+        const errors = validateSchema(schema, data);
+        if (!errors.length && check) errors.push(...check(data));
+        if (errors.length) throw new MalformedOutputError(`Model output does not match the ${task} schema: ${errors.slice(0, 3).join('; ')}${errors.length > 3 ? ` (+${errors.length - 3} more)` : ''}`);
+        return data;
+      } catch (err) {
+        if (!(err instanceof MalformedOutputError)) throw err;
+        last = err;
+        console.warn(`[AIService] ${task}: ${err.message} (attempt ${attempt}/${OUTPUT_ATTEMPTS})`);
+      }
+    }
+    throw last;
   }
 
   private async runModel<K extends AITask>(task: K, payload: TaskPayloads[K]): Promise<TaskResults[K]> {
@@ -220,7 +266,7 @@ export class AIService {
         const r = await this.ask(task, { idea, settings, analysis, hook });
         const d = fb as Story;
         const raw: any[] = Array.isArray(r.beats) && r.beats.length >= 3 ? r.beats : d.beats;
-        const beats = retimeTo(raw.map((b: any, i: number): StoryBeat => {
+        const beats = fitTimeline(raw.map((b: any, i: number): StoryBeat => {
           const f = d.beats[Math.min(i, d.beats.length - 1)];
           return { beat: oneOf(b?.beat, BEATS, f.beat), start: num(b?.start, f.start), end: num(b?.end, f.end), description: str(b?.description, f.description), emotion: str(b?.emotion, f.emotion), tempo: oneOf(b?.tempo, ['fast', 'pause', 'peak', 'steady'] as const, f.tempo), pacing: str(b?.pacing, f.pacing) };
         }), settings.duration);
@@ -236,7 +282,7 @@ export class AIService {
       case 'stronger': {
         const p = payload as TaskPayloads['stronger'];
         const r = await this.ask(task, { idea, settings, hook: p.hook, story: p.story, scenes: p.scenes.map(({ imagePrompt, videoPrompt, continuity, ...s }) => s), 'areas already improved': p.boosts, continuity: p.scenes[0]?.continuity });
-        const total = p.scenes.reduce((a, s) => Math.max(a, s.end), 0);
+        const total = settings.duration;
         const scenes = normalizeScenes(r.scenes, p.scenes, p.scenes[0].continuity, total, lang);
         const improvements = (Array.isArray(r.improvements) ? r.improvements : [])
           .map((x: any) => ({ area: oneOf(x?.area, AREAS, 'pacing'), before: str(x?.before, '—'), after: str(x?.after, '—'), why: str(x?.why, '') }))

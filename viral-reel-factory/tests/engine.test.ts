@@ -7,6 +7,7 @@ import { parseIdea } from '../shared/parser';
 import { withPrompts } from '../shared/prompts';
 import type { Duration, Reel, ReelSettings } from '../shared/types';
 import { findVaguePhrases } from '../shared/util';
+import { modelImage, modelVideo } from './fixtures';
 
 // The Phase 1 suite below pins English narrative explicitly; Russian (the app default) is covered further down.
 const S: ReelSettings = { duration: 15, format: '9:16', style: 'cinematic', language: 'en', promptLanguage: 'en' };
@@ -139,12 +140,14 @@ describe('AIService', () => {
       id: 'openai',
       model: 'fake',
       async completeJSON(_s, user) {
-        if (user.includes('TASK: Write 5')) return JSON.stringify({ hooks: [{ type: 'shock', hook: 'Model shock hook', whyItWorks: 'because', openingShot: 'x', onScreenText: '' }] });
+        // Complete, schema-valid output: partial output is now rejected by schema validation (see ai.test.ts).
+        if (user.includes('TASK: Write 5')) return JSON.stringify({ hooks: ['curiosity', 'shock', 'emotional', 'visual', 'story'].map((type) => ({ type, hook: type === 'shock' ? 'Model shock hook' : `${type} hook`, whyItWorks: 'because', openingShot: 'x', onScreenText: '' })) });
+        const sc = (over: object) => ({ purpose: 'p', visual: 'v', action: 'a', camera: 'c', lighting: 'l', sound: 's', onScreenText: '', voiceover: '', image: modelImage(), video: modelVideo(), ...over });
         return JSON.stringify({
           continuity: { character: 'Model hero', wardrobe: 'red coat', location: 'garage', objects: ['cup'], lighting: 'neon', time: 'night', weather: 'rain', cameraStyle: 'handheld', visualStyle: 'gritty', colorPalette: 'red' },
           scenes: [
-            { beat: 'hook', start: 0, end: 4, purpose: 'p1', image: { subject: 'make it viral, a woman' }, continuityChanges: { wardrobe: 'blue dress', lighting: 'daylight' } },
-            { beat: 'TURN', start: 4, end: 9, purpose: 'p2' },
+            sc({ beat: 'hook', start: 0, end: 4, purpose: 'p1', image: { ...modelImage(), subject: 'make it viral, a woman' }, continuityChanges: { wardrobe: 'blue dress', lighting: 'daylight' } }),
+            sc({ beat: 'TURN', start: 4, end: 9, purpose: 'p2' }),
           ],
         });
       },
@@ -316,7 +319,8 @@ describe('AIService languages', () => {
         systems.push(system);
         if (user.includes('TASK: Translate')) {
           const n = JSON.parse(user.slice(user.indexOf('INPUT:') + 6)).scenes.length;
-          return JSON.stringify({ scenes: Array.from({ length: n }, () => ({ image: { subject: 'девушка в машине' }, video: { cameraMovement: 'медленный наезд' }, continuity: { wardrobe: 'красное пальто' } })) });
+          const input = JSON.parse(user.slice(user.indexOf('INPUT:') + 6)).scenes as any[];
+          return JSON.stringify({ scenes: input.slice(0, n).map((x) => ({ image: { lighting: 'мягкий свет', ...x.image, subject: 'девушка в машине' }, video: { ...x.video, cameraMovement: 'медленный наезд' }, continuity: { ...x.continuity, wardrobe: 'красное пальто' } })) });
         }
         return JSON.stringify({ hooks: [] });
       },

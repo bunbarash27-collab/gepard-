@@ -36,6 +36,7 @@ export interface Dict {
   workflow: string;
   uiLanguage: string;
   demoMode: string;
+  realAi: string;
   demoProject: string;
   demoNote: string;
   demoHint: [string, string];
@@ -129,6 +130,7 @@ export const UI: Record<Lang, Dict> = {
     workflow: 'Этапы работы',
     uiLanguage: 'Язык интерфейса',
     demoMode: 'ДЕМО-РЕЖИМ',
+    realAi: 'REAL AI',
     demoProject: 'ДЕМО-ПРОЕКТ',
     demoNote: 'AI API не подключён. Сейчас используется демонстрационный режим: все результаты создаёт встроенный офлайн-движок.',
     demoHint: ['Чтобы подключить OpenAI или Gemini, укажите ключ в', '.'],
@@ -227,6 +229,7 @@ export const UI: Record<Lang, Dict> = {
     workflow: 'Workflow',
     uiLanguage: 'Interface language',
     demoMode: 'DEMO MODE',
+    realAi: 'REAL AI',
     demoProject: 'DEMO PROJECT',
     demoNote: 'No AI API connected. Demo Mode is on: every result comes from the built-in offline engine.',
     demoHint: ['To connect OpenAI or Gemini, add a key to', '.'],

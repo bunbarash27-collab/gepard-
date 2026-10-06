@@ -22,15 +22,24 @@ The first visit opens the **Demo Project** («Девушка садится в �
 
 Without API keys the app runs in **Demo Mode** (ДЕМО-РЕЖИМ). Every step is produced by the built-in offline story engine (`shared/engine.ts`). It is deterministic and rule-based: it parses the idea against a knowledge base of characters, locations, "other worlds" and visual styles (`shared/lexicon.ts`), then composes the reel from dramaturgy templates. It covers common reality-break ideas well. It does not understand arbitrary text the way an LLM does, and the UI labels the mode.
 
-To use a real model, copy `.env.example` to `.env`:
+To use a real model, copy `.env.example` to `.env` and set **one** key. `.env` is git-ignored, the key is read only by the server and is never sent to the browser, returned by an endpoint or logged (provider error messages are redacted).
 
 | Variable | Purpose |
 | --- | --- |
-| `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL` | OpenAI or any OpenAI-compatible endpoint |
-| `GEMINI_API_KEY`, `GEMINI_MODEL` | Google Gemini |
-| `AI_PROVIDER` | `openai` / `gemini` / `demo`; auto-detected from keys when omitted |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` | Google Gemini (AI Studio key, `AQ.…` or `AIza…`); default model `gemini-3.8-flash` |
+| `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL` | OpenAI or any OpenAI-compatible endpoint; default model `gpt-4o-mini` |
+| `AI_PROVIDER` | `gemini` / `openai` / `demo`; auto-detected from keys when omitted |
 
-If the provider fails, the offline engine's result is shown with a warning.
+The header shows the mode: **🟢 REAL AI** (with the model name) or **🟡 ДЕМО-РЕЖИМ**.
+
+Real mode details:
+
+- **Structured output.** Every task sends a JSON Schema (`server/ai/schemas.ts`): Gemini `generationConfig.responseFormat`, OpenAI `response_format: json_schema`. Responses are validated against the same schema (required, non-empty fields, exactly 5 hooks, complete image/video specs); malformed output is retried once.
+- **Retries.** 408/429/5xx, network errors and timeouts are retried up to 3 times with backoff; other errors are not.
+- **Fallback.** If the provider still fails, the offline engine's result is shown with a localized warning; the real error is logged on the server.
+- **Duration.** After every step `sum(scene.duration) === selected duration` is enforced (`fitTimeline` in `shared/util.ts`), for both the model and the offline engine.
+
+`pnpm live-check` runs the whole pipeline (analysis → hooks → story → scenes → Russian prompts → Make It Stronger) against the configured provider and prints the checks and the number of requests, never the key.
 
 ## Architecture
 

@@ -164,7 +164,13 @@ export default function App() {
           <div className="topbar-right">
             <Chips small label={t.uiLanguage} options={LANG_OPTIONS} value={lang} onChange={changeLang} disabled={busy} />
             <div className={`ai-pill ${status?.connected ? 'ai-on' : 'ai-off'}`} title={status?.connected ? status.message : t.demoNote} data-testid="ai-status">
-              <span className="dot" />{status ? (status.connected ? `AI: ${status.model}` : t.demoMode) : '…'}
+              {status ? (
+                <>
+                  <span aria-hidden="true">{status.connected ? '🟢' : '🟡'}</span>
+                  <span>{status.connected ? t.realAi : t.demoMode}</span>
+                  {status.connected && <span className="ai-model">{status.model}</span>}
+                </>
+              ) : '…'}
             </div>
           </div>
         </header>

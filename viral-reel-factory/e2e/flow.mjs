@@ -21,7 +21,7 @@ const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
 const idea = () => page.locator('#idea-input');
 const CYR = /[а-яё]/i;
 // UI chrome text with prompts and the user's own idea removed; whatever Latin words remain must be allowed brand/tech names.
-const ALLOWED = new Set(['VIRAL', 'REEL', 'FACTORY', 'UGC', 'POV', 'API', 'OpenAI', 'Gemini', 'env']);
+const ALLOWED = new Set(['VIRAL', 'REEL', 'FACTORY', 'REAL', 'UGC', 'POV', 'API', 'OpenAI', 'Gemini', 'env']);
 const latinInUi = () => page.evaluate((allowed) => {
   const root = document.querySelector('.app').cloneNode(true);
   root.querySelectorAll('pre, textarea, .toasts').forEach((n) => n.remove());

@@ -9,7 +9,8 @@
     "start": "NODE_ENV=production tsx server/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "e2e": "node e2e/flow.mjs"
+    "e2e": "node e2e/flow.mjs",
+    "live-check": "tsx scripts/live-check.ts"
   },
   "dependencies": {
     "express": "^5.2.1",
