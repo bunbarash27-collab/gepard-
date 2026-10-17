@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
@@ -57,6 +58,7 @@ fun SettingsScreen(vm: MainViewModel, onOpenNotifications: () -> Unit) {
     var dailyGoal by remember { mutableStateOf("") }
     var autoMode by remember { mutableStateOf(true) }
     var saved by remember { mutableStateOf(false) }
+    var showClearRoutesDialog by remember { mutableStateOf(false) }
 
     // Заполняем поля один раз, когда настройки загрузились из DataStore.
     if (loadedFrom == null || (loadedFrom == CostSettings() && current != CostSettings())) {
@@ -110,6 +112,15 @@ fun SettingsScreen(vm: MainViewModel, onOpenNotifications: () -> Unit) {
             Switch(checked = autoMode, onCheckedChange = { autoMode = it })
         }
 
+        Text("Приватность", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        Text(
+            "Финансовые данные хранятся только на устройстве. Резервное копирование приложения отключено. GPS-точки хранятся не более 30 дней и нужны только для проверки работы трекера.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(onClick = { showClearRoutesDialog = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("Удалить сохранённые GPS-маршруты")
+        }
+
         Text("Автомобиль", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
         NumberField(consumption, { consumption = it }, "Расход топлива", suffix = "л/100 км")
         NumberField(fuelPrice, { fuelPrice = it }, "Цена топлива", suffix = "₽/л")
@@ -140,5 +151,18 @@ fun SettingsScreen(vm: MainViewModel, onOpenNotifications: () -> Unit) {
             Text("✅ Сохранено", color = Green)
             LaunchedEffect(Unit) { delay(2000); saved = false }
         }
+    }
+    if (showClearRoutesDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearRoutesDialog = false },
+            title = { Text("Удалить GPS-маршруты?") },
+            text = { Text("Будут удалены сохранённые координаты. Смены, заказы и финансовые итоги останутся без изменений.") },
+            confirmButton = {
+                Button(onClick = { vm.clearTrackingHistory(); showClearRoutesDialog = false }) { Text("Удалить") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showClearRoutesDialog = false }) { Text("Отмена") }
+            },
+        )
     }
 }

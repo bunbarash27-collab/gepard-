@@ -142,6 +142,8 @@ class MainViewModel(app: Application, private val repo: Repository) : AndroidVie
 
     fun clearNotifications() = viewModelScope.launch { repo.clearNotifications() }
 
+    fun clearTrackingHistory() = viewModelScope.launch { repo.clearTrackingHistory() }
+
     companion object {
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {

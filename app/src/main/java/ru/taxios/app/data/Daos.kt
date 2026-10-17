@@ -99,6 +99,15 @@ interface OrderDao {
 interface TrackDao {
     @Insert
     suspend fun insert(point: TrackPointEntity)
+
+    @Query("DELETE FROM track_points WHERE timestamp < :before")
+    suspend fun deleteOlderThan(before: Long)
+
+    @Query("DELETE FROM track_points WHERE shiftId = :shiftId")
+    suspend fun deleteForShift(shiftId: Long)
+
+    @Query("DELETE FROM track_points")
+    suspend fun clear()
 }
 
 @Dao

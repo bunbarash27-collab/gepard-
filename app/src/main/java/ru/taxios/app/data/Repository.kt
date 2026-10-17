@@ -32,7 +32,10 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
 
     suspend fun resumeShift(shiftId: Long) = db.shiftDao().resume(shiftId, System.currentTimeMillis())
 
-    suspend fun deleteShift(shift: ShiftEntity) = db.shiftDao().delete(shift)
+    suspend fun deleteShift(shift: ShiftEntity) {
+        db.trackDao().deleteForShift(shift.id)
+        db.shiftDao().delete(shift)
+    }
 
     suspend fun addOrder(shiftId: Long, price: Double, km: Double, minutes: Int, timestamp: Long = System.currentTimeMillis(), auto: Boolean = false) {
         db.orderDao().insert(OrderEntity(shiftId = shiftId, timestamp = timestamp, price = price, distanceKm = km, durationMin = minutes, auto = auto))
@@ -111,7 +114,13 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
 
     suspend fun addDistance(shiftId: Long, deltaKm: Double) = db.shiftDao().addDistance(shiftId, deltaKm)
 
-    suspend fun addTrackPoint(point: TrackPointEntity) = db.trackDao().insert(point)
+    suspend fun addTrackPoint(point: TrackPointEntity) {
+        db.trackDao().insert(point)
+        db.trackDao().deleteOlderThan(System.currentTimeMillis() - TRACK_POINT_RETENTION_MS)
+    }
+
+    /** Удаляет сохранённые GPS-маршруты, не затрагивая смены, заказы и суммы. */
+    suspend fun clearTrackingHistory() = db.trackDao().clear()
 
     suspend fun setOrderPrice(order: OrderEntity, price: Double, km: Double) =
         db.orderDao().update(order.copy(price = price, distanceKm = km, priceMissing = false))
@@ -134,5 +143,7 @@ class Repository(private val db: AppDatabase, private val settingsStore: Setting
         const val COMPLETION_WINDOW_MS = 4 * 60_000L
         /** Допуск при сопоставлении заказа со строкой истории, минут. */
         const val HISTORY_TOLERANCE_MIN = 2
+        /** Координаты нужны только для недавней диагностики GPS, не для постоянного архива. */
+        const val TRACK_POINT_RETENTION_MS = 30L * 86_400_000L
     }
 }
